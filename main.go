@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -17,27 +21,121 @@ const (
 	telegramMaxMessageLength = 4096
 	maxRestaurantsPerMessage = 5
 	requestTimeout           = 10 * time.Second
+	cacheTTL                 = 1 * time.Hour // Cache results for 1 hour
+	cacheGridSize            = 0.01          // ~1km grid for caching (0.01 degrees)
 )
 
 type RestaurantBot struct {
 	telegramBot *tgbotapi.BotAPI
 	mapsClient  *maps.Client
+	cache       *LocationCache
+	apiProvider string // "google" or "osm"
 }
 
-func NewRestaurantBot(telegramToken string, googleMapsAPIKey string) (*RestaurantBot, error) {
+// LocationCache stores cached restaurant results
+type LocationCache struct {
+	mu    sync.RWMutex
+	items map[string]cacheItem
+}
+
+type cacheItem struct {
+	restaurants []Restaurant
+	expiresAt   time.Time
+}
+
+// Restaurant represents a restaurant (unified format for different APIs)
+type Restaurant struct {
+	Name      string
+	Rating    float64
+	Latitude  float64
+	Longitude float64
+	Address   string
+	Distance  float64
+}
+
+// NewLocationCache creates a new location cache
+func NewLocationCache() *LocationCache {
+	cache := &LocationCache{
+		items: make(map[string]cacheItem),
+	}
+	// Start cleanup goroutine
+	go cache.cleanup()
+	return cache
+}
+
+// cleanup removes expired cache entries
+func (lc *LocationCache) cleanup() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		lc.mu.Lock()
+		now := time.Now()
+		for key, item := range lc.items {
+			if now.After(item.expiresAt) {
+				delete(lc.items, key)
+			}
+		}
+		lc.mu.Unlock()
+	}
+}
+
+// getCacheKey generates a cache key based on location (rounded to grid)
+func getCacheKey(lat, lon float64) string {
+	// Round to grid to cache nearby locations together
+	gridLat := math.Round(lat/cacheGridSize) * cacheGridSize
+	gridLon := math.Round(lon/cacheGridSize) * cacheGridSize
+	return fmt.Sprintf("%.4f,%.4f", gridLat, gridLon)
+}
+
+// Get retrieves cached restaurants for a location
+func (lc *LocationCache) Get(lat, lon float64) ([]Restaurant, bool) {
+	lc.mu.RLock()
+	defer lc.mu.RUnlock()
+	key := getCacheKey(lat, lon)
+	item, exists := lc.items[key]
+	if !exists || time.Now().After(item.expiresAt) {
+		return nil, false
+	}
+	return item.restaurants, true
+}
+
+// Set stores restaurants in cache
+func (lc *LocationCache) Set(lat, lon float64, restaurants []Restaurant) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	key := getCacheKey(lat, lon)
+	lc.items[key] = cacheItem{
+		restaurants: restaurants,
+		expiresAt:   time.Now().Add(cacheTTL),
+	}
+}
+
+func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider string) (*RestaurantBot, error) {
 	bot, err := tgbotapi.NewBotAPI(telegramToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
 	}
 
-	mapsClient, err := maps.NewClient(maps.WithAPIKey(googleMapsAPIKey))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create maps client: %w", err)
+	var mapsClient *maps.Client
+	if apiProvider == "" || apiProvider == "google" {
+		if googleMapsAPIKey == "" {
+			return nil, fmt.Errorf("GOOGLE_MAPS_API_KEY is required when using Google Maps API")
+		}
+		mapsClient, err = maps.NewClient(maps.WithAPIKey(googleMapsAPIKey))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create maps client: %w", err)
+		}
+	}
+
+	if apiProvider == "" {
+		apiProvider = "google"
 	}
 
 	return &RestaurantBot{
 		telegramBot: bot,
 		mapsClient:  mapsClient,
+		cache:       NewLocationCache(),
+		apiProvider: apiProvider,
 	}, nil
 }
 
@@ -85,6 +183,13 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 
 	log.Printf("Received location from user %d: lat=%.6f, lon=%.6f", chatID, location.Latitude, location.Longitude)
 
+	// Check cache first
+	if cached, found := rb.cache.Get(location.Latitude, location.Longitude); found {
+		log.Printf("Cache hit for location %.6f,%.6f", location.Latitude, location.Longitude)
+		rb.sendRestaurantsFromCache(chatID, cached, location.Latitude, location.Longitude)
+		return
+	}
+
 	// Send "searching" message
 	rb.sendTextMessage(chatID, "🔍 Searching for nearby restaurants...")
 
@@ -101,11 +206,25 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Cache the results
+	rb.cache.Set(location.Latitude, location.Longitude, restaurants)
+
 	// Send results
-	rb.sendRestaurants(chatID, restaurants, location.Latitude, location.Longitude)
+	rb.sendRestaurantsFromCache(chatID, restaurants, location.Latitude, location.Longitude)
 }
 
-func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]maps.PlacesSearchResult, error) {
+func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]Restaurant, error) {
+	switch rb.apiProvider {
+	case "osm":
+		return rb.findNearbyRestaurantsOSM(lat, lon)
+	case "google":
+		fallthrough
+	default:
+		return rb.findNearbyRestaurantsGoogle(lat, lon)
+	}
+}
+
+func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restaurant, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
@@ -124,16 +243,141 @@ func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]maps.PlacesS
 		return nil, fmt.Errorf("nearby search failed: %w", err)
 	}
 
-	// Limit to top 10 results
+	// Convert to unified Restaurant format
+	restaurants := make([]Restaurant, 0, len(resp.Results))
 	maxResults := 10
-	if len(resp.Results) > maxResults {
-		return resp.Results[:maxResults], nil
+	for i, place := range resp.Results {
+		if i >= maxResults {
+			break
+		}
+		distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+		restaurants = append(restaurants, Restaurant{
+			Name:      place.Name,
+			Rating:    float64(place.Rating),
+			Latitude:  place.Geometry.Location.Lat,
+			Longitude: place.Geometry.Location.Lng,
+			Address:   place.Vicinity,
+			Distance:  distance,
+		})
 	}
 
-	return resp.Results, nil
+	return restaurants, nil
 }
 
-func (rb *RestaurantBot) sendRestaurants(chatID int64, restaurants []maps.PlacesSearchResult, userLat, userLon float64) {
+func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64) ([]Restaurant, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	// Overpass API query to find restaurants within 2km
+	// Using Overpass Turbo API (free, no API key needed)
+	radius := 2000 // meters
+	query := fmt.Sprintf(`
+		[out:json][timeout:10];
+		(
+		  node["amenity"="restaurant"](around:%d,%.6f,%.6f);
+		  node["amenity"="fast_food"](around:%d,%.6f,%.6f);
+		  node["amenity"="cafe"](around:%d,%.6f,%.6f);
+		  way["amenity"="restaurant"](around:%d,%.6f,%.6f);
+		  way["amenity"="fast_food"](around:%d,%.6f,%.6f);
+		  way["amenity"="cafe"](around:%d,%.6f,%.6f);
+		);
+		out center meta;
+	`, radius, lat, lon, radius, lat, lon, radius, lat, lon, radius, lat, lon, radius, lat, lon, radius, lat, lon)
+
+	// Use Overpass API endpoint
+	apiURL := "https://overpass-api.de/api/interpreter"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(query))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("overpass API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("overpass API returned status %d", resp.StatusCode)
+	}
+
+	var overpassResp struct {
+		Elements []struct {
+			Type   string            `json:"type"`
+			ID     int64             `json:"id"`
+			Lat    float64           `json:"lat,omitempty"`
+			Lon    float64           `json:"lon,omitempty"`
+			Center struct {
+				Lat float64 `json:"lat"`
+				Lon float64 `json:"lon"`
+			} `json:"center,omitempty"`
+			Tags map[string]string `json:"tags"`
+		} `json:"elements"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&overpassResp); err != nil {
+		return nil, fmt.Errorf("failed to decode overpass response: %w", err)
+	}
+
+	restaurants := make([]Restaurant, 0)
+	maxResults := 10
+
+	for _, elem := range overpassResp.Elements {
+		if len(restaurants) >= maxResults {
+			break
+		}
+
+		var elemLat, elemLon float64
+		if elem.Type == "node" {
+			elemLat = elem.Lat
+			elemLon = elem.Lon
+		} else {
+			elemLat = elem.Center.Lat
+			elemLon = elem.Center.Lon
+		}
+
+		name := elem.Tags["name"]
+		if name == "" {
+			name = elem.Tags["amenity"] // Fallback to amenity type
+		}
+
+		// Calculate distance
+		distance := calculateDistance(lat, lon, elemLat, elemLon)
+
+		// Parse rating if available
+		rating := 0.0
+		if ratingStr, ok := elem.Tags["rating"]; ok {
+			if r, err := strconv.ParseFloat(ratingStr, 64); err == nil {
+				rating = r
+			}
+		}
+
+		// Build address from available tags
+		addressParts := []string{}
+		if addr := elem.Tags["addr:street"]; addr != "" {
+			addressParts = append(addressParts, addr)
+		}
+		if houseNum := elem.Tags["addr:housenumber"]; houseNum != "" {
+			addressParts = append(addressParts, houseNum)
+		}
+		address := strings.Join(addressParts, " ")
+
+		restaurants = append(restaurants, Restaurant{
+			Name:      name,
+			Rating:    rating,
+			Latitude:  elemLat,
+			Longitude: elemLon,
+			Address:   address,
+			Distance:  distance,
+		})
+	}
+
+	return restaurants, nil
+}
+
+func (rb *RestaurantBot) sendRestaurantsFromCache(chatID int64, restaurants []Restaurant, userLat, userLon float64) {
 	if len(restaurants) == 0 {
 		return
 	}
@@ -142,31 +386,29 @@ func (rb *RestaurantBot) sendRestaurants(chatID int64, restaurants []maps.Places
 	var builder strings.Builder
 	builder.WriteString("🍽️ *Nearby Restaurants:*\n\n")
 
-	for i, place := range restaurants {
-		// Get distance
-		distance := calculateDistance(userLat, userLon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
-		distanceStr := formatDistance(distance)
+	for i, restaurant := range restaurants {
+		distanceStr := formatDistance(restaurant.Distance)
 
 		// Escape markdown special characters in restaurant name (but keep asterisks for bold)
-		escapedName := escapeMarkdownV2(place.Name)
+		escapedName := escapeMarkdownV2(restaurant.Name)
 
 		// Build message with bold formatting
 		builder.WriteString(fmt.Sprintf("%d. *%s*\n", i+1, escapedName))
 
-		if place.Rating > 0 {
-			builder.WriteString(fmt.Sprintf("   ⭐ Rating: %.1f/5.0\n", place.Rating))
+		if restaurant.Rating > 0 {
+			builder.WriteString(fmt.Sprintf("   ⭐ Rating: %.1f/5.0\n", restaurant.Rating))
 		}
 
 		builder.WriteString(fmt.Sprintf("   📍 Distance: %s\n", distanceStr))
 
-		if len(place.Vicinity) > 0 {
-			escapedAddress := escapeMarkdown(place.Vicinity)
+		if len(restaurant.Address) > 0 {
+			escapedAddress := escapeMarkdown(restaurant.Address)
 			builder.WriteString(fmt.Sprintf("   📌 Address: %s\n", escapedAddress))
 		}
 
-		// Add Google Maps link
-		mapsURL := fmt.Sprintf("https://www.google.com/maps/search/?api=1&query=%.6f,%.6f&query_place_id=%s",
-			place.Geometry.Location.Lat, place.Geometry.Location.Lng, place.PlaceID)
+		// Add Google Maps link (works for any coordinates)
+		mapsURL := fmt.Sprintf("https://www.google.com/maps/search/?api=1&query=%.6f,%.6f",
+			restaurant.Latitude, restaurant.Longitude)
 		builder.WriteString(fmt.Sprintf("   🔗 [View on Maps](%s)\n", mapsURL))
 
 		builder.WriteString("\n")
@@ -327,14 +569,19 @@ func main() {
 	}
 
 	googleMapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
-	if googleMapsAPIKey == "" {
-		log.Fatal("GOOGLE_MAPS_API_KEY environment variable is required")
-	}
+	apiProvider := os.Getenv("API_PROVIDER") // "google" or "osm", defaults to "google"
 
 	// Create bot
-	bot, err := NewRestaurantBot(telegramToken, googleMapsAPIKey)
+	bot, err := NewRestaurantBot(telegramToken, googleMapsAPIKey, apiProvider)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
+	}
+
+	log.Printf("Using API provider: %s", bot.apiProvider)
+	if bot.apiProvider == "osm" {
+		log.Printf("Using OpenStreetMap (FREE) - no API costs!")
+	} else {
+		log.Printf("Using Google Maps API - costs apply per request")
 	}
 
 	// Start bot
