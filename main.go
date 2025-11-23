@@ -6,9 +6,17 @@ import (
 	"log"
 	"math"
 	"os"
+	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"googlemaps.github.io/maps"
+)
+
+const (
+	telegramMaxMessageLength = 4096
+	maxRestaurantsPerMessage = 5
+	requestTimeout           = 10 * time.Second
 )
 
 type RestaurantBot struct {
@@ -78,21 +86,18 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	log.Printf("Received location from user %d: lat=%.6f, lon=%.6f", chatID, location.Latitude, location.Longitude)
 
 	// Send "searching" message
-	searchMsg := tgbotapi.NewMessage(chatID, "🔍 Searching for nearby restaurants...")
-	rb.telegramBot.Send(searchMsg)
+	rb.sendTextMessage(chatID, "🔍 Searching for nearby restaurants...")
 
 	// Find nearby restaurants
 	restaurants, err := rb.findNearbyRestaurants(location.Latitude, location.Longitude)
 	if err != nil {
 		log.Printf("Error finding restaurants: %v", err)
-		errorMsg := tgbotapi.NewMessage(chatID, "❌ Sorry, I couldn't find restaurants at the moment. Please try again later.")
-		rb.telegramBot.Send(errorMsg)
+		rb.sendTextMessage(chatID, "❌ Sorry, I couldn't find restaurants at the moment. Please try again later.")
 		return
 	}
 
 	if len(restaurants) == 0 {
-		noResultsMsg := tgbotapi.NewMessage(chatID, "😔 No restaurants found nearby. Try sharing a different location.")
-		rb.telegramBot.Send(noResultsMsg)
+		rb.sendTextMessage(chatID, "😔 No restaurants found nearby. Try sharing a different location.")
 		return
 	}
 
@@ -101,7 +106,8 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 }
 
 func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]maps.PlacesSearchResult, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
 
 	request := &maps.NearbySearchRequest{
 		Location: &maps.LatLng{
@@ -115,7 +121,7 @@ func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]maps.PlacesS
 
 	resp, err := rb.mapsClient.NearbySearch(ctx, request)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nearby search failed: %w", err)
 	}
 
 	// Limit to top 10 results
@@ -128,39 +134,58 @@ func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]maps.PlacesS
 }
 
 func (rb *RestaurantBot) sendRestaurants(chatID int64, restaurants []maps.PlacesSearchResult, userLat, userLon float64) {
-	message := "🍽️ *Nearby Restaurants:*\n\n"
+	if len(restaurants) == 0 {
+		return
+	}
+
+	// Use strings.Builder for better performance
+	var builder strings.Builder
+	builder.WriteString("🍽️ *Nearby Restaurants:*\n\n")
 
 	for i, place := range restaurants {
 		// Get distance
 		distance := calculateDistance(userLat, userLon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
 		distanceStr := formatDistance(distance)
 
-		// Build message
-		message += fmt.Sprintf("%d. *%s*\n", i+1, place.Name)
-		
+		// Escape markdown special characters in restaurant name (but keep asterisks for bold)
+		escapedName := escapeMarkdownV2(place.Name)
+
+		// Build message with bold formatting
+		builder.WriteString(fmt.Sprintf("%d. *%s*\n", i+1, escapedName))
+
 		if place.Rating > 0 {
-			message += fmt.Sprintf("   ⭐ Rating: %.1f/5.0\n", place.Rating)
+			builder.WriteString(fmt.Sprintf("   ⭐ Rating: %.1f/5.0\n", place.Rating))
 		}
-		
-		message += fmt.Sprintf("   📍 Distance: %s\n", distanceStr)
-		
+
+		builder.WriteString(fmt.Sprintf("   📍 Distance: %s\n", distanceStr))
+
 		if len(place.Vicinity) > 0 {
-			message += fmt.Sprintf("   📌 Address: %s\n", place.Vicinity)
+			escapedAddress := escapeMarkdown(place.Vicinity)
+			builder.WriteString(fmt.Sprintf("   📌 Address: %s\n", escapedAddress))
 		}
 
 		// Add Google Maps link
 		mapsURL := fmt.Sprintf("https://www.google.com/maps/search/?api=1&query=%.6f,%.6f&query_place_id=%s",
 			place.Geometry.Location.Lat, place.Geometry.Location.Lng, place.PlaceID)
-		message += fmt.Sprintf("   🔗 [View on Maps](%s)\n", mapsURL)
-		
-		message += "\n"
+		builder.WriteString(fmt.Sprintf("   🔗 [View on Maps](%s)\n", mapsURL))
+
+		builder.WriteString("\n")
+
+		// Check if message is getting too long (Telegram limit is 4096 chars)
+		message := builder.String()
+		if len(message) > telegramMaxMessageLength-200 { // Leave some buffer
+			// Send current message and start a new one
+			rb.sendMessage(chatID, message)
+			builder.Reset()
+			builder.WriteString(fmt.Sprintf("🍽️ *Restaurants (continued):*\n\n"))
+		}
 	}
 
-	msg := tgbotapi.NewMessage(chatID, message)
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	msg.DisableWebPagePreview = false
-
-	rb.telegramBot.Send(msg)
+	// Send remaining message
+	message := builder.String()
+	if len(message) > 0 {
+		rb.sendMessage(chatID, message)
+	}
 }
 
 func (rb *RestaurantBot) sendWelcomeMessage(chatID int64) {
@@ -174,9 +199,7 @@ I can help you find nearby restaurants based on your location.
 
 Use /help for more information.`
 
-	msg := tgbotapi.NewMessage(chatID, message)
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	rb.telegramBot.Send(msg)
+	rb.sendMessage(chatID, message)
 }
 
 func (rb *RestaurantBot) sendHelpMessage(chatID int64) {
@@ -194,14 +217,76 @@ func (rb *RestaurantBot) sendHelpMessage(chatID int64) {
 
 *Note:* Make sure location services are enabled on your device.`
 
-	msg := tgbotapi.NewMessage(chatID, message)
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	rb.telegramBot.Send(msg)
+	rb.sendMessage(chatID, message)
 }
 
 func (rb *RestaurantBot) sendTextMessage(chatID int64, text string) {
+	rb.sendMessage(chatID, text)
+}
+
+// sendMessage sends a message with markdown formatting and proper error handling
+func (rb *RestaurantBot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
-	rb.telegramBot.Send(msg)
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	msg.DisableWebPagePreview = false
+
+	if _, err := rb.telegramBot.Send(msg); err != nil {
+		log.Printf("Failed to send message to chat %d: %v", chatID, err)
+	}
+}
+
+// escapeMarkdownV2 escapes markdown special characters in text that will be wrapped in asterisks
+// We escape asterisks in the text itself, but the wrapping asterisks will still work for bold
+func escapeMarkdownV2(text string) string {
+	// Escape all markdown special characters including asterisks
+	// The wrapping asterisks in the caller will still create bold formatting
+	replacer := strings.NewReplacer(
+		"*", "\\*",
+		"_", "\\_",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		"`", "\\`",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	)
+	return replacer.Replace(text)
+}
+
+// escapeMarkdown escapes all markdown special characters (for addresses and other text)
+func escapeMarkdown(text string) string {
+	// Escape all markdown special characters: * _ [ ] ( ) ~ ` > # + - = | { } . !
+	replacer := strings.NewReplacer(
+		"*", "\\*",
+		"_", "\\_",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		"`", "\\`",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	)
+	return replacer.Replace(text)
 }
 
 // calculateDistance calculates the distance between two coordinates using Haversine formula
