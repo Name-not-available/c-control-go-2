@@ -29,7 +29,7 @@ type RestaurantBot struct {
 	telegramBot *tgbotapi.BotAPI
 	mapsClient  *maps.Client
 	cache       *LocationCache
-	apiProvider string // "google" or "osm"
+	apiProvider string // "google", "osm", or "both"
 }
 
 // LocationCache stores cached restaurant results
@@ -117,13 +117,16 @@ func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider
 	}
 
 	var mapsClient *maps.Client
-	if apiProvider == "" || apiProvider == "google" {
-		if googleMapsAPIKey == "" {
+	// Initialize Google Maps client if needed
+	if apiProvider == "" || apiProvider == "google" || apiProvider == "both" {
+		if googleMapsAPIKey == "" && apiProvider != "osm" {
 			return nil, fmt.Errorf("GOOGLE_MAPS_API_KEY is required when using Google Maps API")
 		}
-		mapsClient, err = maps.NewClient(maps.WithAPIKey(googleMapsAPIKey))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create maps client: %w", err)
+		if googleMapsAPIKey != "" {
+			mapsClient, err = maps.NewClient(maps.WithAPIKey(googleMapsAPIKey))
+			if err != nil {
+				return nil, fmt.Errorf("failed to create maps client: %w", err)
+			}
 		}
 	}
 
@@ -217,10 +220,118 @@ func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]Restaurant, 
 	switch rb.apiProvider {
 	case "osm":
 		return rb.findNearbyRestaurantsOSM(lat, lon)
+	case "both":
+		return rb.findNearbyRestaurantsBoth(lat, lon)
 	case "google":
 		fallthrough
 	default:
 		return rb.findNearbyRestaurantsGoogle(lat, lon)
+	}
+}
+
+// findNearbyRestaurantsBoth searches both providers in parallel and combines results
+func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64) ([]Restaurant, error) {
+	type result struct {
+		restaurants []Restaurant
+		err         error
+		source      string
+	}
+
+	resultsChan := make(chan result, 2)
+
+	// Search Google Maps in parallel
+	go func() {
+		if rb.mapsClient == nil {
+			resultsChan <- result{restaurants: []Restaurant{}, err: nil, source: "google"}
+			return
+		}
+		restaurants, err := rb.findNearbyRestaurantsGoogle(lat, lon)
+		resultsChan <- result{restaurants: restaurants, err: err, source: "google"}
+	}()
+
+	// Search OpenStreetMap in parallel
+	go func() {
+		restaurants, err := rb.findNearbyRestaurantsOSM(lat, lon)
+		resultsChan <- result{restaurants: restaurants, err: err, source: "osm"}
+	}()
+
+	// Collect results from both providers
+	var allRestaurants []Restaurant
+	var errors []string
+
+	for i := 0; i < 2; i++ {
+		res := <-resultsChan
+		if res.err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", res.source, res.err))
+			log.Printf("Error from %s: %v", res.source, res.err)
+		} else {
+			// Mark each restaurant with its source
+			for j := range res.restaurants {
+				res.restaurants[j].Name = fmt.Sprintf("[%s] %s", strings.ToUpper(res.source), res.restaurants[j].Name)
+			}
+			allRestaurants = append(allRestaurants, res.restaurants...)
+		}
+	}
+
+	// If both failed, return error
+	if len(allRestaurants) == 0 && len(errors) > 0 {
+		return nil, fmt.Errorf("all providers failed: %s", strings.Join(errors, "; "))
+	}
+
+	// Deduplicate restaurants based on name and location (within 50m)
+	deduplicated := deduplicateRestaurants(allRestaurants)
+
+	// Sort by distance
+	sortRestaurantsByDistance(deduplicated, lat, lon)
+
+	// Limit to top 10 results
+	maxResults := 10
+	if len(deduplicated) > maxResults {
+		deduplicated = deduplicated[:maxResults]
+	}
+
+	return deduplicated, nil
+}
+
+// deduplicateRestaurants removes duplicate restaurants based on name similarity and proximity
+func deduplicateRestaurants(restaurants []Restaurant) []Restaurant {
+	if len(restaurants) == 0 {
+		return restaurants
+	}
+
+	seen := make(map[string]bool)
+	var unique []Restaurant
+	const proximityThreshold = 0.0005 // ~50 meters
+
+	for _, r := range restaurants {
+		// Create a key based on normalized name and rounded coordinates
+		normalizedName := strings.ToLower(strings.TrimSpace(r.Name))
+		// Remove source prefix for deduplication
+		normalizedName = strings.TrimPrefix(normalizedName, "[google] ")
+		normalizedName = strings.TrimPrefix(normalizedName, "[osm] ")
+		
+		// Round coordinates to proximity threshold
+		roundedLat := math.Round(r.Latitude/proximityThreshold) * proximityThreshold
+		roundedLon := math.Round(r.Longitude/proximityThreshold) * proximityThreshold
+		key := fmt.Sprintf("%s_%.6f_%.6f", normalizedName, roundedLat, roundedLon)
+
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, r)
+		}
+	}
+
+	return unique
+}
+
+// sortRestaurantsByDistance sorts restaurants by distance from user location
+func sortRestaurantsByDistance(restaurants []Restaurant, userLat, userLon float64) {
+	for i := 0; i < len(restaurants)-1; i++ {
+		for j := i + 1; j < len(restaurants); j++ {
+			if restaurants[i].Distance > restaurants[j].Distance {
+				restaurants[i], restaurants[j] = restaurants[j], restaurants[i]
+			}
+		}
 	}
 }
 
@@ -569,7 +680,7 @@ func main() {
 	}
 
 	googleMapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
-	apiProvider := os.Getenv("API_PROVIDER") // "google" or "osm", defaults to "google"
+	apiProvider := os.Getenv("API_PROVIDER") // "google", "osm", or "both", defaults to "google"
 
 	// Create bot
 	bot, err := NewRestaurantBot(telegramToken, googleMapsAPIKey, apiProvider)
@@ -578,9 +689,15 @@ func main() {
 	}
 
 	log.Printf("Using API provider: %s", bot.apiProvider)
-	if bot.apiProvider == "osm" {
+	switch bot.apiProvider {
+	case "osm":
 		log.Printf("Using OpenStreetMap (FREE) - no API costs!")
-	} else {
+	case "both":
+		log.Printf("Using BOTH Google Maps and OpenStreetMap - searching in parallel!")
+		if googleMapsAPIKey == "" {
+			log.Printf("WARNING: GOOGLE_MAPS_API_KEY not set, only OSM will be used")
+		}
+	default:
 		log.Printf("Using Google Maps API - costs apply per request")
 	}
 

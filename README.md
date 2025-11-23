@@ -29,13 +29,17 @@ A Telegram bot written in Go that helps users find nearby restaurants using thei
 
 ### 2. Choose API Provider
 
-You have two options:
+You have three options:
 
 #### Option A: OpenStreetMap (FREE - Recommended for cost savings)
-- **No API key needed!**
-- Completely free, no costs
+- **No API key needed!** OpenStreetMap uses the Overpass API which is completely free and doesn't require authentication
+- Completely free, no costs, no API key required
 - Good coverage in most areas
 - Set `API_PROVIDER=osm` in environment variables
+- **Where to get OpenStreetMap API?** You don't need one! It's completely free and uses public endpoints:
+  - Overpass API: https://wiki.openstreetmap.org/wiki/Overpass_API
+  - Public endpoints: `https://overpass-api.de/api/interpreter` (used by default)
+  - No registration, no API key, no limits (reasonable use)
 
 #### Option B: Google Maps API
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
@@ -45,11 +49,19 @@ You have two options:
 5. Copy the API key
 6. Set `API_PROVIDER=google` (or leave unset, defaults to Google)
 
+#### Option C: Both Providers (Parallel Search) ⚡
+- **Search both Google Maps and OpenStreetMap simultaneously**
+- Combines results from both sources
+- Results are marked with `[GOOGLE]` or `[OSM]` prefix
+- Automatically deduplicates restaurants found in both sources
+- Set `API_PROVIDER=both` in environment variables
+- Requires Google Maps API key (OSM doesn't need one)
+
 ### 3. Configure Environment Variables
 
 Create a `.env` file in the project root (or export environment variables):
 
-**For OpenStreetMap (FREE):**
+**For OpenStreetMap (FREE - No API key needed!):**
 ```bash
 export TELEGRAM_BOT_TOKEN="your_telegram_bot_token_here"
 export API_PROVIDER="osm"
@@ -62,11 +74,18 @@ export API_PROVIDER="google"
 export GOOGLE_MAPS_API_KEY="your_google_maps_api_key_here"
 ```
 
+**For Both Providers (Parallel Search):**
+```bash
+export TELEGRAM_BOT_TOKEN="your_telegram_bot_token_here"
+export API_PROVIDER="both"
+export GOOGLE_MAPS_API_KEY="your_google_maps_api_key_here"
+```
+
 Or create a `.env` file:
 ```
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-API_PROVIDER=osm  # or "google" for Google Maps
-GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here  # Only needed if API_PROVIDER=google
+API_PROVIDER=both  # Options: "google", "osm", or "both"
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here  # Only needed if API_PROVIDER=google or API_PROVIDER=both
 ```
 
 ### 4. Install Dependencies
@@ -125,20 +144,38 @@ go build -o restaurant-bot
 
 ### 2. **OpenStreetMap Support** 🆓
 - Use `API_PROVIDER=osm` for **zero API costs**
+- **No API key needed!** OpenStreetMap uses public Overpass API endpoints
 - OpenStreetMap data is completely free
 - Good coverage in most urban areas
+- **Where to get OpenStreetMap API key?** You don't need one! It's free and uses public endpoints
 
-### 3. **Cost Comparison**
+### 3. **Parallel Search (Both Providers)** ⚡
+- Use `API_PROVIDER=both` to search Google Maps and OpenStreetMap simultaneously
+- Combines results from both sources for maximum coverage
+- Results are marked with `[GOOGLE]` or `[OSM]` prefix
+- Automatically deduplicates restaurants found in both sources
+- Sorted by distance from user location
 
-| Provider | Cost per Request | Free Tier | Best For |
-|----------|-----------------|-----------|----------|
-| **OpenStreetMap** | **$0.00** | Unlimited | Cost-conscious users |
-| Google Maps | $0.032 | $200/month (~6,250 requests) | Better data quality |
+### 4. **Cost Comparison**
+
+| Provider | Cost per Request | Free Tier | API Key Required | Best For |
+|----------|-----------------|-----------|------------------|----------|
+| **OpenStreetMap** | **$0.00** | Unlimited | **No** | Cost-conscious users |
+| Google Maps | $0.032 | $200/month (~6,250 requests) | Yes | Better data quality |
+| **Both (Parallel)** | $0.032* | $200/month (Google only) | Google only | Maximum coverage |
+
+*When using "both", only Google Maps API calls cost money. OSM is always free.
 
 **Example Monthly Costs:**
-- 1,000 requests: OSM = **$0**, Google = **$32**
-- 5,000 requests: OSM = **$0**, Google = **$160** (within free tier)
-- 10,000 requests: OSM = **$0**, Google = **$320** ($200 free + $120)
+- 1,000 requests: OSM = **$0**, Google = **$32**, Both = **$32** (only Google costs)
+- 5,000 requests: OSM = **$0**, Google = **$160** (within free tier), Both = **$160**
+- 10,000 requests: OSM = **$0**, Google = **$320** ($200 free + $120), Both = **$320**
+
+**OpenStreetMap API Key Information:**
+- **You don't need an API key!** OpenStreetMap is completely free
+- Uses public Overpass API endpoints: `https://overpass-api.de/api/interpreter`
+- No registration, no authentication, no limits (reasonable use)
+- More info: https://wiki.openstreetmap.org/wiki/Overpass_API
 
 ## API Limits
 
