@@ -45,12 +45,12 @@ type cacheItem struct {
 
 // Restaurant represents a restaurant (unified format for different APIs)
 type Restaurant struct {
-	Name      string
-	Rating    float64
-	Latitude  float64
-	Longitude float64
-	Address   string
-	Distance  float64
+	Name      string  `json:"Name"`
+	Rating    float64 `json:"Rating"`
+	Latitude  float64 `json:"Latitude"`
+	Longitude float64 `json:"Longitude"`
+	Address   string  `json:"Address"`
+	Distance  float64 `json:"Distance"`
 }
 
 // NewLocationCache creates a new location cache
@@ -700,6 +700,101 @@ func main() {
 	default:
 		log.Printf("Using Google Maps API - costs apply per request")
 	}
+
+	// Start HTTP server for web interface
+	go func() {
+		http.HandleFunc("/api/restaurants", func(w http.ResponseWriter, r *http.Request) {
+			// Enable CORS
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			if r.Method != "GET" && r.Method != "POST" {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Get lat/lon from query params or JSON body
+			var lat, lon float64
+			var err error
+
+			if r.Method == "GET" {
+				latStr := r.URL.Query().Get("lat")
+				lonStr := r.URL.Query().Get("lon")
+				if latStr == "" || lonStr == "" {
+					http.Error(w, "lat and lon parameters are required", http.StatusBadRequest)
+					return
+				}
+				lat, err = strconv.ParseFloat(latStr, 64)
+				if err != nil {
+					http.Error(w, "Invalid lat parameter", http.StatusBadRequest)
+					return
+				}
+				lon, err = strconv.ParseFloat(lonStr, 64)
+				if err != nil {
+					http.Error(w, "Invalid lon parameter", http.StatusBadRequest)
+					return
+				}
+			} else {
+				var req struct {
+					Lat float64 `json:"lat"`
+					Lon float64 `json:"lon"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+					return
+				}
+				lat = req.Lat
+				lon = req.Lon
+			}
+
+			// Check cache first
+			var restaurants []Restaurant
+			if cached, found := bot.cache.Get(lat, lon); found {
+				log.Printf("Cache hit for location %.6f,%.6f", lat, lon)
+				restaurants = cached
+			} else {
+				// Find restaurants
+				restaurants, err = bot.findNearbyRestaurants(lat, lon)
+				if err != nil {
+					log.Printf("Error finding restaurants: %v", err)
+					http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
+					return
+				}
+				// Cache the results
+				if len(restaurants) > 0 {
+					bot.cache.Set(lat, lon, restaurants)
+				}
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(restaurants)
+		})
+
+		// Serve HTML page
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFile(w, r, "index.html")
+		})
+
+		port := os.Getenv("HTTP_PORT")
+		if port == "" {
+			port = "8080"
+		}
+		log.Printf("HTTP server starting on port %s", port)
+		log.Printf("Web interface available at http://localhost:%s", port)
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
+			log.Printf("HTTP server error: %v", err)
+		}
+	}()
 
 	// Start bot
 	if err := bot.Start(); err != nil {

@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant Finder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .search-section {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        .restaurants-list {
+            display: grid;
+            gap: 20px;
+        }
+
+        .restaurant-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .restaurant-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+
+        .restaurant-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .restaurant-name {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .restaurant-number {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.1em;
+            flex-shrink: 0;
+        }
+
+        .restaurant-info {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #555;
+            font-size: 0.95em;
+        }
+
+        .info-item .icon {
+            font-size: 1.2em;
+        }
+
+        .rating {
+            color: #ff9800;
+            font-weight: 600;
+        }
+
+        .distance {
+            color: #2196f3;
+            font-weight: 600;
+        }
+
+        .address {
+            color: #666;
+        }
+
+        .maps-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            margin-top: 5px;
+            transition: color 0.3s;
+        }
+
+        .maps-link:hover {
+            color: #764ba2;
+            text-decoration: underline;
+        }
+
+        .no-results {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            color: #666;
+            display: none;
+        }
+
+        .no-results.active {
+            display: block;
+        }
+
+        .no-results .emoji {
+            font-size: 4em;
+            margin-bottom: 15px;
+        }
+
+        @media (max-width: 600px) {
+            .input-group {
+                flex-direction: column;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .restaurant-header {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .restaurant-number {
+                align-self: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍽️ Restaurant Finder</h1>
+            <p>Find nearby restaurants just like the Telegram bot</p>
+        </div>
+
+        <div class="search-section">
+            <div class="input-group">
+                <input type="number" id="latitude" placeholder="Latitude (e.g., 40.7128)" step="any">
+                <input type="number" id="longitude" placeholder="Longitude (e.g., -74.0060)" step="any">
+            </div>
+            <div class="button-group">
+                <button class="btn-primary" onclick="searchRestaurants()">🔍 Search Restaurants</button>
+                <button class="btn-secondary" onclick="getCurrentLocation()">📍 Use My Location</button>
+            </div>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="loading" id="loading">🔍 Searching for nearby restaurants...</div>
+
+        <div class="no-results" id="no-results">
+            <div class="emoji">😔</div>
+            <h2>No restaurants found</h2>
+            <p>Try searching with a different location</p>
+        </div>
+
+        <div class="restaurants-list" id="restaurants-list"></div>
+    </div>
+
+    <script>
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.classList.add('active');
+            setTimeout(() => {
+                errorDiv.classList.remove('active');
+            }, 5000);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('active', show);
+        }
+
+        function getCurrentLocation() {
+            if (!navigator.geolocation) {
+                showError('Geolocation is not supported by your browser');
+                return;
+            }
+
+            showLoading(true);
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    document.getElementById('latitude').value = position.coords.latitude;
+                    document.getElementById('longitude').value = position.coords.longitude;
+                    showLoading(false);
+                    searchRestaurants();
+                },
+                (error) => {
+                    showLoading(false);
+                    showError('Unable to get your location: ' + error.message);
+                }
+            );
+        }
+
+        function formatDistance(distanceKm) {
+            if (distanceKm < 1.0) {
+                return Math.round(distanceKm * 1000) + ' m';
+            }
+            return distanceKm.toFixed(2) + ' km';
+        }
+
+        function searchRestaurants() {
+            const lat = parseFloat(document.getElementById('latitude').value);
+            const lon = parseFloat(document.getElementById('longitude').value);
+
+            if (isNaN(lat) || isNaN(lon)) {
+                showError('Please enter valid latitude and longitude values');
+                return;
+            }
+
+            showLoading(true);
+            document.getElementById('restaurants-list').innerHTML = '';
+            document.getElementById('no-results').classList.remove('active');
+
+            fetch(`/api/restaurants?lat=${lat}&lon=${lon}`)
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            throw new Error(text || 'Failed to fetch restaurants');
+                        });
+                    }
+                    return response.json();
+                })
+                .then(restaurants => {
+                    showLoading(false);
+                    if (restaurants.length === 0) {
+                        document.getElementById('no-results').classList.add('active');
+                        return;
+                    }
+
+                    const listDiv = document.getElementById('restaurants-list');
+                    restaurants.forEach((restaurant, index) => {
+                        const card = document.createElement('div');
+                        card.className = 'restaurant-card';
+
+                        const mapsURL = `https://www.google.com/maps/search/?api=1&query=${restaurant.Latitude},${restaurant.Longitude}`;
+
+                        card.innerHTML = `
+                            <div class="restaurant-header">
+                                <div>
+                                    <div class="restaurant-name">${restaurant.Name}</div>
+                                </div>
+                                <div class="restaurant-number">${index + 1}</div>
+                            </div>
+                            <div class="restaurant-info">
+                                ${restaurant.Rating > 0 ? `
+                                    <div class="info-item">
+                                        <span class="icon">⭐</span>
+                                        <span class="rating">Rating: ${restaurant.Rating.toFixed(1)}/5.0</span>
+                                    </div>
+                                ` : ''}
+                                <div class="info-item">
+                                    <span class="icon">📍</span>
+                                    <span class="distance">Distance: ${formatDistance(restaurant.Distance)}</span>
+                                </div>
+                                ${restaurant.Address ? `
+                                    <div class="info-item">
+                                        <span class="icon">📌</span>
+                                        <span class="address">Address: ${restaurant.Address}</span>
+                                    </div>
+                                ` : ''}
+                                <a href="${mapsURL}" target="_blank" class="maps-link">
+                                    <span class="icon">🔗</span>
+                                    View on Maps
+                                </a>
+                            </div>
+                        `;
+
+                        listDiv.appendChild(card);
+                    });
+                })
+                .catch(error => {
+                    showLoading(false);
+                    showError('Error: ' + error.message);
+                    console.error('Error:', error);
+                });
+        }
+
+        // Allow Enter key to trigger search
+        document.getElementById('latitude').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchRestaurants();
+        });
+        document.getElementById('longitude').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchRestaurants();
+        });
+    </script>
+</body>
+</html>
