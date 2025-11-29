@@ -48,6 +48,7 @@ type cacheItem struct {
 type Restaurant struct {
 	Name           string  `json:"Name"`
 	Rating         float64 `json:"Rating"`
+	ReviewCount    int     `json:"ReviewCount,omitempty"`
 	Latitude       float64 `json:"Latitude"`
 	Longitude      float64 `json:"Longitude"`
 	Address        string  `json:"Address"`
@@ -113,9 +114,15 @@ func (lc *LocationCache) Set(lat, lon float64, restaurants []Restaurant) {
 }
 
 func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider string) (*RestaurantBot, error) {
-	bot, err := tgbotapi.NewBotAPI(telegramToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+	var bot *tgbotapi.BotAPI
+	var err error
+
+	// Only create Telegram bot if token is provided
+	if telegramToken != "" {
+		bot, err = tgbotapi.NewBotAPI(telegramToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+		}
 	}
 
 	var mapsClient *maps.Client
@@ -145,6 +152,10 @@ func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider
 }
 
 func (rb *RestaurantBot) Start() error {
+	if rb.telegramBot == nil {
+		return fmt.Errorf("telegram bot is not initialized")
+	}
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 
@@ -393,9 +404,16 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 				photoRef = place.Photos[0].PhotoReference
 			}
 
+			// Extract review count (UserRatingsTotal)
+			reviewCount := 0
+			if place.UserRatingsTotal > 0 {
+				reviewCount = place.UserRatingsTotal
+			}
+
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
 				Rating:         float64(place.Rating),
+				ReviewCount:    reviewCount,
 				Latitude:       place.Geometry.Location.Lat,
 				Longitude:      place.Geometry.Location.Lng,
 				Address:        place.Vicinity,
@@ -717,31 +735,47 @@ func formatDistance(distanceKm float64) string {
 
 func main() {
 	// Get environment variables
-	telegramToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if telegramToken == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN environment variable is required")
-	}
+	enableTelegramBot := os.Getenv("ENABLE_TELEGRAM_BOT")
+	telegramEnabled := enableTelegramBot == "true" || enableTelegramBot == "1"
 
 	googleMapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	apiProvider := os.Getenv("API_PROVIDER") // "google", "osm", or "both", defaults to "google"
 
-	// Create bot
-	bot, err := NewRestaurantBot(telegramToken, googleMapsAPIKey, apiProvider)
-	if err != nil {
-		log.Fatalf("Failed to create bot: %v", err)
-	}
+	var bot *RestaurantBot
+	var err error
 
-	log.Printf("Using API provider: %s", bot.apiProvider)
-	switch bot.apiProvider {
-	case "osm":
-		log.Printf("Using OpenStreetMap (FREE) - no API costs!")
-	case "both":
-		log.Printf("Using BOTH Google Maps and OpenStreetMap - searching in parallel!")
-		if googleMapsAPIKey == "" {
-			log.Printf("WARNING: GOOGLE_MAPS_API_KEY not set, only OSM will be used")
+	if telegramEnabled {
+		telegramToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+		if telegramToken == "" {
+			log.Fatal("TELEGRAM_BOT_TOKEN environment variable is required when ENABLE_TELEGRAM_BOT is true")
 		}
-	default:
-		log.Printf("Using Google Maps API - costs apply per request")
+
+		// Create bot
+		bot, err = NewRestaurantBot(telegramToken, googleMapsAPIKey, apiProvider)
+		if err != nil {
+			log.Fatalf("Failed to create bot: %v", err)
+		}
+
+		log.Printf("Using API provider: %s", bot.apiProvider)
+		switch bot.apiProvider {
+		case "osm":
+			log.Printf("Using OpenStreetMap (FREE) - no API costs!")
+		case "both":
+			log.Printf("Using BOTH Google Maps and OpenStreetMap - searching in parallel!")
+			if googleMapsAPIKey == "" {
+				log.Printf("WARNING: GOOGLE_MAPS_API_KEY not set, only OSM will be used")
+			}
+		default:
+			log.Printf("Using Google Maps API - costs apply per request")
+		}
+	} else {
+		log.Printf("Telegram bot is disabled (set ENABLE_TELEGRAM_BOT=true to enable)")
+		// Create a minimal bot instance just for the HTTP server functionality
+		bot, err = NewRestaurantBot("", googleMapsAPIKey, apiProvider)
+		if err != nil {
+			log.Fatalf("Failed to create bot instance: %v", err)
+		}
+		log.Printf("Using API provider: %s", bot.apiProvider)
 	}
 
 	// Start HTTP server for web interface
@@ -888,8 +922,14 @@ func main() {
 		}
 	}()
 
-	// Start bot
-	if err := bot.Start(); err != nil {
-		log.Fatalf("Bot error: %v", err)
+	// Start bot only if enabled
+	if telegramEnabled {
+		if err := bot.Start(); err != nil {
+			log.Fatalf("Bot error: %v", err)
+		}
+	} else {
+		// Keep the program running for HTTP server
+		log.Printf("HTTP server running. Telegram bot disabled.")
+		select {} // Block forever to keep HTTP server running
 	}
 }

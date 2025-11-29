@@ -219,7 +219,11 @@
             if (restaurant.Rating > 0) {
                 const ratingBadge = document.createElement('div');
                 ratingBadge.className = 'absolute top-2 left-2 bg-yellow-400 text-yellow-900 text-xs md:text-[8px] font-bold px-2 py-1 md:px-1.5 md:py-0.5 rounded';
-                ratingBadge.textContent = `⭐ ${restaurant.Rating.toFixed(1)}`;
+                let ratingText = `⭐ ${restaurant.Rating.toFixed(1)}`;
+                if (restaurant.ReviewCount && restaurant.ReviewCount > 0) {
+                    ratingText += ` (${restaurant.ReviewCount})`;
+                }
+                ratingBadge.textContent = ratingText;
                 imgContainer.appendChild(ratingBadge);
             }
             
