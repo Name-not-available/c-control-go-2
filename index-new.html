@@ -194,8 +194,9 @@
             // Use place_id if available (opens actual restaurant page), otherwise use coordinates
             let mapsURL;
             if (restaurant.PlaceID) {
-                // Use the correct Google Maps URL format for place_id
-                mapsURL = `https://www.google.com/maps/search/?api=1&query_place_id=${restaurant.PlaceID}`;
+                // Use query+query_place_id to open the Google Place card directly
+                const nameParam = encodeURIComponent(restaurant.Name || 'GooglePlace');
+                mapsURL = `https://www.google.com/maps/search/?api=1&query=${nameParam}&query_place_id=${restaurant.PlaceID}`;
             } else {
                 const searchQuery = encodeURIComponent(`${restaurant.Name || 'Restaurant'} ${restaurant.Latitude},${restaurant.Longitude}`);
                 mapsURL = `https://www.google.com/maps/search/?api=1&query=${searchQuery}`;
