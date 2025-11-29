@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Savor Delicious Flavors of the Food Boulevard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Schematic placeholder style */
+        .schematic-img {
+            background-color: #e5e7eb; /* gray-200 */
+            background-image: linear-gradient(45deg, #f3f4f6 25%, transparent 25%, transparent 75%, #f3f4f6 75%, #f3f4f6), 
+                              linear-gradient(45deg, #f3f4f6 25%, transparent 25%, transparent 75%, #f3f4f6 75%, #f3f4f6);
+            background-size: 10px 10px;
+            background-position: 0 0, 5px 5px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 min-h-screen flex justify-center items-start">
+
+    <!-- Main Container representing the board -->
+    <div class="bg-white w-full max-w-[1400px] shadow-2xl overflow-hidden rounded-lg flex flex-col">
+        
+        <!-- Header -->
+        <header class="bg-gray-100 p-6 border-b border-gray-300 flex justify-between items-center">
+            <h1 class="text-2xl md:text-4xl font-extrabold text-gray-800 uppercase tracking-tight">
+                Savor Delicious Flavors of the Food Boulevard
+            </h1>
+            <div class="hidden md:flex flex-col items-end text-sm text-gray-600">
+                <span class="font-bold">READY TO EAT?</span>
+                <span>SCAN AND GO!</span>
+                <div class="w-12 h-12 bg-black mt-1"></div> <!-- QR Code Placeholder -->
+            </div>
+        </header>
+
+        <!-- Content Area -->
+        <div class="flex flex-col md:flex-row h-full">
+            
+            <!-- LEFT COLUMN (Yellow) -->
+            <div class="w-full md:w-[40%] bg-[#FCEDA5] flex flex-col relative">
+                
+                <!-- Floor 3 -->
+                <div class="flex p-4 border-b border-yellow-300/50">
+                    <div class="text-4xl font-black text-gray-800 w-12 pt-2">3</div>
+                    <div class="flex-1 grid grid-cols-4 gap-2">
+                        <!-- Items for Floor 3 -->
+                        <div class="schematic-box" data-label="Japanese Food"></div>
+                        <div class="schematic-box" data-label="Chinese Food"></div>
+                        <div class="schematic-box" data-label="Baan Ice"></div>
+                        <div class="schematic-box" data-label="Fillets"></div>
+                        <div class="schematic-box" data-label="Unagi"></div>
+                        <div class="schematic-box" data-label="Hou Yuu"></div>
+                        <div class="schematic-box" data-label="Tonkatsu"></div>
+                    </div>
+                </div>
+
+                <!-- Floor 2 & 1 Row -->
+                <div class="flex p-4 border-b border-yellow-300/50">
+                    <!-- Floor 2 -->
+                    <div class="flex items-start mr-4">
+                        <div class="text-4xl font-black text-gray-800 w-8 pt-2">2</div>
+                        <div class="w-20">
+                             <div class="schematic-box" data-label="% Arabica"></div>
+                        </div>
+                    </div>
+                    <!-- Floor 1 -->
+                    <div class="flex items-start flex-1">
+                        <div class="text-4xl font-black text-gray-800 w-8 pt-2">1</div>
+                        <div class="flex-1 grid grid-cols-4 gap-2">
+                             <div class="schematic-box" data-label="% Arabica"></div>
+                             <div class="schematic-box" data-label="Baan Suriyasai"></div>
+                             <div class="schematic-box" data-label="Savor"></div>
+                             <div class="schematic-box" data-label="Kim Roll"></div>
+                             <!-- Row 2 of Floor 1 -->
+                             <div class="schematic-box" data-label="Spicy"></div>
+                             <div class="schematic-box" data-label="Thong Smith"></div>
+                             <div class="schematic-box" data-label="Kub Kao"></div>
+                             <div class="schematic-box" data-label="Tonkatsu"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floor G -->
+                <div class="flex p-4 border-b border-yellow-300/50">
+                    <div class="text-4xl font-black text-gray-800 w-12 pt-2">G</div>
+                    <div class="flex-1 grid grid-cols-4 gap-2">
+                        <div class="schematic-box" data-label="Smith & Co."></div>
+                        <div class="schematic-box" data-label="Sarnies"></div>
+                        <div class="schematic-box" data-label="Starbucks"></div>
+                        <div class="schematic-box" data-label="Thank You"></div>
+                        <div class="schematic-box" data-label="Din Tai Fung"></div>
+                        <div class="schematic-box" data-label="Pie Face"></div>
+                        <div class="schematic-box" data-label="White Story"></div>
+                        <div class="schematic-box" data-label="The Wireless"></div>
+                    </div>
+                </div>
+
+                <!-- Floor B1 -->
+                <div class="flex p-4 flex-1">
+                    <div class="text-4xl font-black text-gray-800 w-12 pt-2">B1</div>
+                    <div class="flex-1 grid grid-cols-4 gap-2">
+                        <div class="schematic-box" data-label="Spaghetti"></div>
+                        <div class="schematic-box" data-label="Masu"></div>
+                        <div class="schematic-box" data-label="Tonchin"></div>
+                        <div class="schematic-box" data-label="Mama Cafe"></div>
+                        <div class="schematic-box" data-label="Pacamara"></div>
+                        <div class="schematic-box" data-label="Zabpver"></div>
+                        <div class="schematic-box" data-label="Enfant"></div>
+                        <div class="schematic-box" data-label="Lucky Panda"></div>
+                        <div class="schematic-box" data-label="Khao Mun"></div>
+                        <div class="schematic-box" data-label="Zaab Eli"></div>
+                        <div class="schematic-box" data-label="Nose Tea"></div>
+                        <div class="schematic-box" data-label="Jib Jib"></div>
+                        <div class="schematic-box" data-label="Sol Coffee"></div>
+                        <div class="schematic-box" data-label="Matcha"></div>
+                        <div class="schematic-box" data-label="P.S. Coffee"></div>
+                        <div class="schematic-box" data-label="Chi Juice"></div>
+                        <div class="schematic-box" data-label="Evie's"></div>
+                        <div class="schematic-box" data-label="BKK Bagels"></div>
+                    </div>
+                </div>
+
+                 <!-- Floor 1 Red Footer -->
+                 <div class="bg-[#D93846] p-4 flex text-white mt-auto">
+                    <div class="text-4xl font-black w-12 pt-1">1</div>
+                    <div class="w-32">
+                        <div class="schematic-box !bg-white/90" data-label="Charoen Gang"></div>
+                    </div>
+                 </div>
+
+            </div>
+
+            <!-- RIGHT COLUMN (Blue) -->
+            <div class="w-full md:w-[60%] bg-[#6BB5F6] flex flex-col">
+                
+                <!-- Floor 5 -->
+                <div class="flex p-4 border-b border-blue-400/50">
+                    <div class="text-4xl font-black text-white w-12 pt-2">5</div>
+                    <div class="flex-1 grid grid-cols-6 gap-2">
+                         <div class="schematic-box blue-theme" data-label="Cafe"></div>
+                         <div class="schematic-box blue-theme" data-label="Sizzler"></div>
+                         <div class="schematic-box blue-theme" data-label="Bar B Q"></div>
+                         <div class="schematic-box blue-theme" data-label="Food St."></div>
+                         <div class="schematic-box blue-theme" data-label="Tudari"></div>
+                         <div class="schematic-box blue-theme" data-label="Red Diamond"></div>
+                         <div class="schematic-box blue-theme" data-label="Ant C"></div>
+                         <div class="schematic-box blue-theme" data-label="Shabu"></div>
+                         <div class="schematic-box blue-theme" data-label="Xiao"></div>
+                         <div class="schematic-box blue-theme" data-label="Four"></div>
+                         <div class="schematic-box blue-theme" data-label="Mo-Mo"></div>
+                         <div class="schematic-box blue-theme" data-label="Tenjo"></div>
+                         <!-- Row 2 small items -->
+                         <div class="schematic-box blue-theme" data-label="Yogurt"></div>
+                         <div class="schematic-box blue-theme" data-label="Fuku"></div>
+                         <div class="schematic-box blue-theme" data-label="Waffle"></div>
+                         <div class="schematic-box blue-theme" data-label="Too Fast"></div>
+                    </div>
+                </div>
+
+                <!-- Floor 3 -->
+                <div class="flex p-4 border-b border-blue-400/50">
+                    <div class="text-4xl font-black text-white w-12 pt-2">3</div>
+                    <div class="flex-1 grid grid-cols-6 gap-2">
+                        <div class="schematic-box blue-theme" data-label="Sushiro"></div>
+                        <div class="schematic-box blue-theme" data-label="Bonchon"></div>
+                        <div class="schematic-box blue-theme" data-label="Kub Kao"></div>
+                        <div class="schematic-box blue-theme" data-label="Onkijin"></div>
+                        <div class="schematic-box blue-theme" data-label="Baan Ying"></div>
+                        <div class="schematic-box blue-theme" data-label="Nice Two"></div>
+                        <div class="schematic-box blue-theme" data-label="Bianca"></div>
+                        <div class="schematic-box blue-theme" data-label="Starbucks"></div>
+                        <!-- Row 2 -->
+                         <div class="schematic-box blue-theme" data-label="Sourie"></div>
+                         <div class="schematic-box blue-theme" data-label="Fire Tiger"></div>
+                         <div class="schematic-box blue-theme" data-label="Maguro"></div>
+                         <div class="schematic-box blue-theme" data-label="Easy Buddy"></div>
+                         <div class="schematic-box blue-theme" data-label="Paco"></div>
+                         <div class="schematic-box blue-theme" data-label="Gaga"></div>
+                         <div class="schematic-box blue-theme" data-label="Cafe Chilli"></div>
+                         <div class="schematic-box blue-theme" data-label="Coffee 101"></div>
+                         <!-- Row 3 -->
+                         <div class="schematic-box blue-theme" data-label="Yole"></div>
+                         <div class="schematic-box blue-theme" data-label="A Keen"></div>
+                         <div class="schematic-box blue-theme" data-label="Karun"></div>
+                         <div class="schematic-box blue-theme" data-label="Everyday"></div>
+                         <div class="schematic-box blue-theme" data-label="Rosh"></div>
+                         <div class="schematic-box blue-theme" data-label="Yenly Yours"></div>
+                         <div class="schematic-box blue-theme" data-label="Hao"></div>
+                         <div class="schematic-box blue-theme" data-label="After You"></div>
+                    </div>
+                </div>
+
+                <!-- Row for G, 1, 2 -->
+                <div class="flex p-4 border-b border-blue-400/50 items-center">
+                    
+                    <!-- G -->
+                    <div class="flex flex-col items-center mr-6">
+                        <div class="text-4xl font-black text-white mb-2">G</div>
+                        <div class="flex gap-2">
+                            <div class="schematic-box blue-theme !w-16" data-label="Dean & Deluca"></div>
+                            <div class="schematic-box blue-theme !w-16" data-label="Molly Tea"></div>
+                        </div>
+                    </div>
+
+                    <!-- 1 -->
+                    <div class="flex flex-col items-center mr-6 border-l border-blue-400/50 pl-6">
+                         <div class="text-4xl font-black text-white mb-2">1</div>
+                         <div class="flex gap-2">
+                            <div class="schematic-box blue-theme !w-16" data-label="Nais"></div>
+                            <div class="schematic-box blue-theme !w-16" data-label="Ludo"></div>
+                            <div class="schematic-box blue-theme !w-16" data-label="Lele"></div>
+                         </div>
+                    </div>
+
+                    <!-- 2 -->
+                    <div class="flex flex-col items-center border-l border-blue-400/50 pl-6">
+                         <div class="text-4xl font-black text-white mb-2">2</div>
+                         <div class="flex gap-2">
+                            <div class="schematic-box blue-theme !w-16" data-label="Shake Shack"></div>
+                            <div class="schematic-box blue-theme !w-16" data-label="Tempura"></div>
+                            <div class="schematic-box blue-theme !w-16" data-label="Vintage"></div>
+                         </div>
+                    </div>
+                </div>
+
+                <!-- Floor B1 -->
+                <div class="flex p-4">
+                    <div class="text-4xl font-black text-white w-12 pt-2">B1</div>
+                    <div class="flex-1 grid grid-cols-6 gap-2">
+                        <div class="schematic-box blue-theme" data-label="Boon Tong"></div>
+                        <div class="schematic-box blue-theme" data-label="Savory"></div>
+                        <div class="schematic-box blue-theme" data-label="Lim Lao"></div>
+                        <div class="schematic-box blue-theme" data-label="Krua"></div>
+                        <div class="schematic-box blue-theme" data-label="Bibimbab"></div>
+                        <div class="schematic-box blue-theme" data-label="Amazon"></div>
+                        <div class="schematic-box blue-theme" data-label="Tim Ho"></div>
+                        <div class="schematic-box blue-theme" data-label="Kam's"></div>
+                        <div class="schematic-box blue-theme" data-label="MX Cakes"></div>
+                        <div class="schematic-box blue-theme" data-label="KFC"></div>
+                        <!-- Row 2 -->
+                        <div class="schematic-box blue-theme" data-label="Moo"></div>
+                        <div class="schematic-box blue-theme" data-label="Ootoya"></div>
+                        <div class="schematic-box blue-theme" data-label="Maisen"></div>
+                        <div class="schematic-box blue-theme" data-label="Table"></div>
+                        <div class="schematic-box blue-theme" data-label="Yakiniku"></div>
+                        <div class="schematic-box blue-theme" data-label="Oishi"></div>
+                        <div class="schematic-box blue-theme" data-label="Swensens"></div>
+                        <div class="schematic-box blue-theme" data-label="Lek"></div>
+                        <div class="schematic-box blue-theme" data-label="Koi The"></div>
+                        <div class="schematic-box blue-theme" data-label="Starbucks"></div>
+                        <!-- Row 3 -->
+                        <div class="schematic-box blue-theme" data-label="White"></div>
+                        <div class="schematic-box blue-theme" data-label="Anti"></div>
+                        <div class="schematic-box blue-theme" data-label="Dairy"></div>
+                        <div class="schematic-box blue-theme" data-label="Kamu"></div>
+                        <div class="schematic-box blue-theme" data-label="Gaga"></div>
+                        <div class="schematic-box blue-theme" data-label="Chatrame"></div>
+                        <div class="schematic-box blue-theme" data-label="Tp Tea"></div>
+                        <div class="schematic-box blue-theme" data-label="Lugaw"></div>
+                        <div class="schematic-box blue-theme" data-label="Bake"></div>
+                        <div class="schematic-box blue-theme" data-label="Little"></div>
+                    </div>
+                </div>
+
+                <!-- Footer Depachika -->
+                <div class="mt-auto bg-[#D6EAF8] p-6 text-gray-700 text-xs">
+                    <div class="flex flex-col md:flex-row gap-8">
+                        <div>
+                            <h3 class="text-red-500 font-bold text-lg mb-2">Restaurant<br>Preview<br>PRO</h3>
+                        </div>
+                        
+                        <div class="flex-1">
+                            <h4 class="font-bold mb-1">PARTNERS</h4>
+                            <p class="leading-relaxed opacity-70">
+                                NAME 1 | NAME 2 | NAME 3 | NAME 4 | NAME 5 | NAME 6 | NAME 7 | NAME 8 | NAME 9 | NAME 10
+                            </p>
+                        </div>
+
+                        <div class="flex-1">
+                            <h4 class="font-bold mb-1">US</h4>
+                            <p class="leading-relaxed opacity-70">
+                                NAME 1 | NAME 2 | NAME 3 | NAME 4 | NAME 5 | NAME 6 | NAME 7 | NAME 8 | NAME 9 | NAME 10
+                            </p>
+                        </div>
+
+                         <div class="flex-1">
+                            <h4 class="font-bold mb-1">ABOUT US</h4>
+                            <p class="leading-relaxed opacity-70">
+                                We are cool
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simple script to inject content into the schematic boxes to allow for easier updating
+        document.querySelectorAll('.schematic-box').forEach(box => {
+            const label = box.getAttribute('data-label');
+            
+            // Set styles for all boxes
+            box.className += ' flex flex-col gap-1 w-full aspect-[4/3]';
+            
+            // Add image placeholder
+            const imgPlaceholder = document.createElement('div');
+            imgPlaceholder.className = 'schematic-img w-full h-[70%] rounded-sm border border-black/5';
+            box.appendChild(imgPlaceholder);
+
+            // Add text label
+            const textLabel = document.createElement('div');
+            textLabel.innerText = label;
+            textLabel.className = 'text-[9px] font-bold leading-tight truncate text-center';
+            
+            // Text color logic
+            if (box.classList.contains('blue-theme')) {
+                textLabel.classList.add('text-white');
+            } else if (box.classList.contains('!bg-white/90')) {
+                textLabel.classList.add('text-red-600');
+            } else {
+                textLabel.classList.add('text-gray-800');
+            }
+            
+            box.appendChild(textLabel);
+        });
+    </script>
+</body>
+</html>
