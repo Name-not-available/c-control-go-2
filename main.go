@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -45,12 +46,13 @@ type cacheItem struct {
 
 // Restaurant represents a restaurant (unified format for different APIs)
 type Restaurant struct {
-	Name      string  `json:"Name"`
-	Rating    float64 `json:"Rating"`
-	Latitude  float64 `json:"Latitude"`
-	Longitude float64 `json:"Longitude"`
-	Address   string  `json:"Address"`
-	Distance  float64 `json:"Distance"`
+	Name           string  `json:"Name"`
+	Rating         float64 `json:"Rating"`
+	Latitude       float64 `json:"Latitude"`
+	Longitude      float64 `json:"Longitude"`
+	Address        string  `json:"Address"`
+	Distance       float64 `json:"Distance"`
+	PhotoReference string  `json:"PhotoReference,omitempty"`
 }
 
 // NewLocationCache creates a new location cache
@@ -309,7 +311,7 @@ func deduplicateRestaurants(restaurants []Restaurant) []Restaurant {
 		// Remove source prefix for deduplication
 		normalizedName = strings.TrimPrefix(normalizedName, "[google] ")
 		normalizedName = strings.TrimPrefix(normalizedName, "[osm] ")
-		
+
 		// Round coordinates to proximity threshold
 		roundedLat := math.Round(r.Latitude/proximityThreshold) * proximityThreshold
 		roundedLon := math.Round(r.Longitude/proximityThreshold) * proximityThreshold
@@ -362,13 +364,21 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 			break
 		}
 		distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+
+		// Extract photo reference if available
+		photoRef := ""
+		if len(place.Photos) > 0 {
+			photoRef = place.Photos[0].PhotoReference
+		}
+
 		restaurants = append(restaurants, Restaurant{
-			Name:      place.Name,
-			Rating:    float64(place.Rating),
-			Latitude:  place.Geometry.Location.Lat,
-			Longitude: place.Geometry.Location.Lng,
-			Address:   place.Vicinity,
-			Distance:  distance,
+			Name:           place.Name,
+			Rating:         float64(place.Rating),
+			Latitude:       place.Geometry.Location.Lat,
+			Longitude:      place.Geometry.Location.Lng,
+			Address:        place.Vicinity,
+			Distance:       distance,
+			PhotoReference: photoRef,
 		})
 	}
 
@@ -416,10 +426,10 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64) ([]Restauran
 
 	var overpassResp struct {
 		Elements []struct {
-			Type   string            `json:"type"`
-			ID     int64             `json:"id"`
-			Lat    float64           `json:"lat,omitempty"`
-			Lon    float64           `json:"lon,omitempty"`
+			Type   string  `json:"type"`
+			ID     int64   `json:"id"`
+			Lat    float64 `json:"lat,omitempty"`
+			Lon    float64 `json:"lon,omitempty"`
 			Center struct {
 				Lat float64 `json:"lat"`
 				Lon float64 `json:"lon"`
@@ -774,6 +784,50 @@ func main() {
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(restaurants)
+		})
+
+		// Proxy endpoint for Google Places photos
+		http.HandleFunc("/api/photo", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			photoRef := r.URL.Query().Get("photo_reference")
+			if photoRef == "" {
+				http.Error(w, "photo_reference parameter is required", http.StatusBadRequest)
+				return
+			}
+
+			if googleMapsAPIKey == "" {
+				http.Error(w, "Google Maps API key not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			// Fetch photo from Google Places Photo API
+			photoURL := fmt.Sprintf("https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=%s&key=%s", photoRef, googleMapsAPIKey)
+
+			resp, err := http.Get(photoURL)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to fetch photo: %v", err), http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				http.Error(w, "Failed to fetch photo", resp.StatusCode)
+				return
+			}
+
+			// Copy headers
+			w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+			w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
+
+			// Stream the image
+			_, err = io.Copy(w, resp.Body)
+			if err != nil {
+				log.Printf("Error streaming photo: %v", err)
+			}
 		})
 
 		// Serve index-new.html

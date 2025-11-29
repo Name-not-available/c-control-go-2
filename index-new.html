@@ -310,10 +310,25 @@
         }
 
         function getRestaurantImageUrl(restaurant) {
-            // Use a simple approach - create a colored gradient based on restaurant name
+            // If photo reference is available from Google Places API, use it
+            if (restaurant.PhotoReference) {
+                return `/api/photo?photo_reference=${encodeURIComponent(restaurant.PhotoReference)}`;
+            }
+            
+            // Fallback: Try to get a food-related image from Unsplash Source
             const hash = restaurant.Name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-            const hue = hash % 360;
-            return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="hsl(${hue}, 70%, 50%)"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-size="24" font-weight="bold">${restaurant.Name}</text></svg>`)}`;
+            const foodKeywords = ['restaurant', 'food', 'dining', 'cuisine', 'meal', 'dish', 'cooking'];
+            const keyword = foodKeywords[hash % foodKeywords.length];
+            // Use Unsplash Source with a unique identifier based on restaurant name
+            return `https://source.unsplash.com/400x300/?${keyword}&sig=${hash}`;
+        }
+
+        function getRestaurantBackgroundColor(restaurant) {
+            // Generate a color gradient based on restaurant name as fallback
+            const hash = restaurant.Name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+            const hue1 = hash % 360;
+            const hue2 = (hash + 60) % 360;
+            return `linear-gradient(135deg, hsl(${hue1}, 70%, 50%) 0%, hsl(${hue2}, 70%, 50%) 100%)`;
         }
 
         function createRestaurantBox(restaurant, index, isBlue = false, isRed = false) {
@@ -324,14 +339,23 @@
             
             // Add image
             const imgContainer = document.createElement('div');
-            imgContainer.className = 'schematic-img w-full h-[70%] rounded-sm border border-black/5 relative overflow-hidden';
+            const bgGradient = getRestaurantBackgroundColor(restaurant);
+            imgContainer.className = 'w-full h-[70%] rounded-sm border border-black/5 relative overflow-hidden';
+            imgContainer.style.background = bgGradient;
+            imgContainer.style.backgroundSize = 'cover';
+            imgContainer.style.backgroundPosition = 'center';
             
             const img = document.createElement('img');
             img.src = getRestaurantImageUrl(restaurant);
-            img.className = 'w-full h-full object-cover';
+            img.className = 'w-full h-full object-cover absolute top-0 left-0';
             img.alt = restaurant.Name;
             img.onerror = function() {
+                // If image fails to load, hide it and show the gradient background
                 this.style.display = 'none';
+            };
+            img.onload = function() {
+                // Image loaded successfully, overlay the gradient
+                this.style.display = 'block';
             };
             imgContainer.appendChild(img);
             
