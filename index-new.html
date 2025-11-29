@@ -191,7 +191,13 @@
             // Make cards bigger - taller aspect ratio
             box.className = 'restaurant-box flex flex-col gap-2 w-full aspect-[3/4] md:aspect-[4/3]';
             
-            const mapsURL = `https://www.google.com/maps/search/?api=1&query=${restaurant.Latitude},${restaurant.Longitude}`;
+            // Use place_id if available (opens actual restaurant page), otherwise use coordinates
+            let mapsURL;
+            if (restaurant.PlaceID) {
+                mapsURL = `https://www.google.com/maps/place/?q=place_id:${restaurant.PlaceID}`;
+            } else {
+                mapsURL = `https://www.google.com/maps/search/?api=1&query=${restaurant.Latitude},${restaurant.Longitude}`;
+            }
             
             // Add image - make it bigger
             const imgContainer = document.createElement('div');

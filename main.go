@@ -54,6 +54,7 @@ type Restaurant struct {
 	Address        string  `json:"Address"`
 	Distance       float64 `json:"Distance"`
 	PhotoReference string  `json:"PhotoReference,omitempty"`
+	PlaceID        string  `json:"PlaceID,omitempty"`
 }
 
 // NewLocationCache creates a new location cache
@@ -419,6 +420,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 				Address:        place.Vicinity,
 				Distance:       distance,
 				PhotoReference: photoRef,
+				PlaceID:        place.PlaceID,
 			})
 		}
 
