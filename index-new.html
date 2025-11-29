@@ -266,13 +266,13 @@
             };
             imgContainer.appendChild(img);
             
-            // Add rating badge if available
+            // Add rating badge if available (same size as price badge)
             if (restaurant.Rating > 0) {
                 const ratingBadge = document.createElement('div');
-                ratingBadge.className = 'absolute top-2 left-2 bg-white/70 text-gray-800 text-[10px] md:text-[8px] font-semibold px-2 py-0.5 rounded';
-                let ratingText = `⭐ ${restaurant.Rating.toFixed(1)}`;
+                ratingBadge.className = 'absolute top-2 left-2 bg-black/50 text-white text-[10px] md:text-[8px] font-semibold px-1.5 py-0.5 rounded';
+                let ratingText = `⭐${restaurant.Rating.toFixed(1)}`;
                 if (restaurant.ReviewCount && restaurant.ReviewCount > 0) {
-                    ratingText += ` (${restaurant.ReviewCount})`;
+                    ratingText += `(${restaurant.ReviewCount})`;
                 }
                 ratingBadge.textContent = ratingText;
                 imgContainer.appendChild(ratingBadge);
@@ -281,7 +281,7 @@
             const priceSymbol = getPriceSymbol(restaurant.PriceLevel);
             if (priceSymbol) {
                 const priceBadge = document.createElement('div');
-                priceBadge.className = 'absolute top-2 right-2 bg-green-200/80 text-green-900 text-[10px] md:text-[8px] font-semibold px-2 py-0.5 rounded';
+                priceBadge.className = 'absolute top-2 right-2 bg-black/50 text-green-300 text-[10px] md:text-[8px] font-semibold px-1.5 py-0.5 rounded';
                 priceBadge.textContent = priceSymbol;
                 const priceDescription = formatPriceLevel(restaurant.PriceLevel);
                 if (priceDescription) {
