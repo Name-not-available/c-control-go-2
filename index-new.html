@@ -3,51 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Restaurant Finder - Discover Nearby Eateries</title>
+    <title>Savor Delicious Flavors of the Food Boulevard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
         }
 
-        .restaurant-card {
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        /* Schematic placeholder style */
+        .schematic-img {
+            background-color: #e5e7eb;
+            background-image: linear-gradient(45deg, #f3f4f6 25%, transparent 25%, transparent 75%, #f3f4f6 75%, #f3f4f6), 
+                              linear-gradient(45deg, #f3f4f6 25%, transparent 25%, transparent 75%, #f3f4f6 75%, #f3f4f6);
+            background-size: 10px 10px;
+            background-position: 0 0, 5px 5px;
         }
 
-        .restaurant-card:hover {
-            transform: translateY(-8px);
+        .restaurant-box {
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
 
-        .restaurant-image {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .restaurant-image img {
-            transition: transform 0.5s ease;
-        }
-
-        .restaurant-card:hover .restaurant-image img {
-            transform: scale(1.1);
-        }
-
-        .rating-badge {
-            background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
-        }
-
-        .distance-badge {
-            background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+        .restaurant-box:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
 
         .loading-spinner {
@@ -61,115 +42,235 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
-        .fade-in {
-            animation: fadeIn 0.5s ease-in;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .search-section {
-            backdrop-filter: blur(10px);
-            background: rgba(255, 255, 255, 0.95);
-        }
     </style>
 </head>
-<body class="min-h-screen py-8 px-4">
-    <div class="max-w-7xl mx-auto">
+<body class="bg-gray-100 p-4 min-h-screen flex justify-center items-start">
+
+    <!-- Main Container representing the board -->
+    <div class="bg-white w-full max-w-[1400px] shadow-2xl overflow-hidden rounded-lg flex flex-col">
+        
         <!-- Header -->
-        <div class="text-center mb-8 fade-in">
-            <h1 class="text-4xl md:text-5xl font-extrabold text-white mb-3 drop-shadow-lg">
-                🍽️ Restaurant Finder
+        <header class="bg-gray-100 p-6 border-b border-gray-300 flex justify-between items-center">
+            <h1 class="text-2xl md:text-4xl font-extrabold text-gray-800 uppercase tracking-tight">
+                Savor Delicious Flavors of the Food Boulevard
             </h1>
-            <p class="text-white/90 text-lg md:text-xl font-medium">
-                Discover amazing restaurants near you
-            </p>
-        </div>
+            <div class="hidden md:flex flex-col items-end text-sm text-gray-600">
+                <span class="font-bold">READY TO EAT?</span>
+                <span>SCAN AND GO!</span>
+                <div class="w-12 h-12 bg-black mt-1"></div> <!-- QR Code Placeholder -->
+            </div>
+        </header>
 
         <!-- Search Section -->
-        <div class="search-section rounded-2xl shadow-2xl p-6 md:p-8 mb-8 fade-in">
-            <div class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-2">
-                            Latitude
-                        </label>
-                        <input 
-                            type="number" 
-                            id="latitude" 
-                            placeholder="e.g., 40.7128" 
-                            step="any"
-                            class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none transition-colors text-gray-800"
-                        >
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-2">
-                            Longitude
-                        </label>
-                        <input 
-                            type="number" 
-                            id="longitude" 
-                            placeholder="e.g., -74.0060" 
-                            step="any"
-                            class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none transition-colors text-gray-800"
-                        >
-                    </div>
-                </div>
-                <div class="flex flex-col sm:flex-row gap-3">
-                    <button 
-                        onclick="searchRestaurants()" 
-                        class="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold py-3 px-6 rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-                    >
-                        🔍 Search Restaurants
-                    </button>
-                    <button 
-                        onclick="getCurrentLocation()" 
-                        class="flex-1 bg-gray-100 text-gray-700 font-semibold py-3 px-6 rounded-xl hover:bg-gray-200 transition-all shadow-md hover:shadow-lg"
-                    >
-                        📍 Use My Location
-                    </button>
+        <div class="bg-white p-4 border-b border-gray-300">
+            <div class="flex flex-col md:flex-row gap-3">
+                <input 
+                    type="number" 
+                    id="latitude" 
+                    placeholder="Latitude (e.g., 40.7128)" 
+                    step="any"
+                    class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                >
+                <input 
+                    type="number" 
+                    id="longitude" 
+                    placeholder="Longitude (e.g., -74.0060)" 
+                    step="any"
+                    class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                >
+                <button 
+                    onclick="searchRestaurants()" 
+                    class="px-6 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors"
+                >
+                    🔍 Search
+                </button>
+                <button 
+                    onclick="getCurrentLocation()" 
+                    class="px-6 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                    📍 My Location
+                </button>
+            </div>
+            <div id="error" class="hidden mt-3 bg-red-50 border-l-4 border-red-500 text-red-700 p-3 rounded"></div>
+            <div id="loading" class="hidden mt-3 text-center">
+                <div class="inline-block">
+                    <div class="loading-spinner w-8 h-8 mx-auto mb-2"></div>
+                    <p class="text-sm text-gray-600">Searching for restaurants...</p>
                 </div>
             </div>
         </div>
 
-        <!-- Error Message -->
-        <div id="error" class="hidden bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded-lg mb-6 shadow-md">
-            <p class="font-medium"></p>
-        </div>
+        <!-- Content Area -->
+        <div class="flex flex-col md:flex-row h-full">
+            
+            <!-- LEFT COLUMN (Yellow) -->
+            <div class="w-full md:w-[40%] bg-[#FCEDA5] flex flex-col relative" id="left-column">
+                
+                <!-- Floor 3 -->
+                <div class="flex p-4 border-b border-yellow-300/50" id="floor-3-left">
+                    <div class="text-4xl font-black text-gray-800 w-12 pt-2">3</div>
+                    <div class="flex-1 grid grid-cols-4 gap-2" id="floor-3-left-grid">
+                        <!-- Restaurants will be populated here -->
+                    </div>
+                </div>
 
-        <!-- Loading Indicator -->
-        <div id="loading" class="hidden text-center py-12">
-            <div class="inline-block">
-                <div class="loading-spinner w-12 h-12 mx-auto mb-4"></div>
-                <p class="text-white text-lg font-medium">Searching for nearby restaurants...</p>
+                <!-- Floor 2 & 1 Row -->
+                <div class="flex p-4 border-b border-yellow-300/50">
+                    <!-- Floor 2 -->
+                    <div class="flex items-start mr-4">
+                        <div class="text-4xl font-black text-gray-800 w-8 pt-2">2</div>
+                        <div class="w-20">
+                            <div class="flex-1 grid grid-cols-1 gap-2" id="floor-2-left-grid">
+                                <!-- Restaurants will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Floor 1 -->
+                    <div class="flex items-start flex-1">
+                        <div class="text-4xl font-black text-gray-800 w-8 pt-2">1</div>
+                        <div class="flex-1 grid grid-cols-4 gap-2" id="floor-1-left-grid">
+                            <!-- Restaurants will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floor G -->
+                <div class="flex p-4 border-b border-yellow-300/50" id="floor-g-left">
+                    <div class="text-4xl font-black text-gray-800 w-12 pt-2">G</div>
+                    <div class="flex-1 grid grid-cols-4 gap-2" id="floor-g-left-grid">
+                        <!-- Restaurants will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Floor B1 -->
+                <div class="flex p-4 flex-1" id="floor-b1-left">
+                    <div class="text-4xl font-black text-gray-800 w-12 pt-2">B1</div>
+                    <div class="flex-1 grid grid-cols-4 gap-2" id="floor-b1-left-grid">
+                        <!-- Restaurants will be populated here -->
+                    </div>
+                </div>
+
+                 <!-- Floor 1 Red Footer -->
+                 <div class="bg-[#D93846] p-4 flex text-white mt-auto">
+                    <div class="text-4xl font-black w-12 pt-1">1</div>
+                    <div class="w-32">
+                        <div id="floor-1-red-grid" class="grid grid-cols-1 gap-2">
+                            <!-- Restaurants will be populated here -->
+                        </div>
+                    </div>
+                 </div>
+
+            </div>
+
+            <!-- RIGHT COLUMN (Blue) -->
+            <div class="w-full md:w-[60%] bg-[#6BB5F6] flex flex-col" id="right-column">
+                
+                <!-- Floor 5 -->
+                <div class="flex p-4 border-b border-blue-400/50" id="floor-5-right">
+                    <div class="text-4xl font-black text-white w-12 pt-2">5</div>
+                    <div class="flex-1 grid grid-cols-6 gap-2" id="floor-5-right-grid">
+                        <!-- Restaurants will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Floor 3 -->
+                <div class="flex p-4 border-b border-blue-400/50" id="floor-3-right">
+                    <div class="text-4xl font-black text-white w-12 pt-2">3</div>
+                    <div class="flex-1 grid grid-cols-6 gap-2" id="floor-3-right-grid">
+                        <!-- Restaurants will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Row for G, 1, 2 -->
+                <div class="flex p-4 border-b border-blue-400/50 items-center">
+                    
+                    <!-- G -->
+                    <div class="flex flex-col items-center mr-6">
+                        <div class="text-4xl font-black text-white mb-2">G</div>
+                        <div class="flex gap-2" id="floor-g-right-grid">
+                            <!-- Restaurants will be populated here -->
+                        </div>
+                    </div>
+
+                    <!-- 1 -->
+                    <div class="flex flex-col items-center mr-6 border-l border-blue-400/50 pl-6">
+                         <div class="text-4xl font-black text-white mb-2">1</div>
+                         <div class="flex gap-2" id="floor-1-right-grid">
+                            <!-- Restaurants will be populated here -->
+                         </div>
+                    </div>
+
+                    <!-- 2 -->
+                    <div class="flex flex-col items-center border-l border-blue-400/50 pl-6">
+                         <div class="text-4xl font-black text-white mb-2">2</div>
+                         <div class="flex gap-2" id="floor-2-right-grid">
+                            <!-- Restaurants will be populated here -->
+                         </div>
+                    </div>
+                </div>
+
+                <!-- Floor B1 -->
+                <div class="flex p-4" id="floor-b1-right">
+                    <div class="text-4xl font-black text-white w-12 pt-2">B1</div>
+                    <div class="flex-1 grid grid-cols-6 gap-2" id="floor-b1-right-grid">
+                        <!-- Restaurants will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Footer Depachika -->
+                <div class="mt-auto bg-[#D6EAF8] p-6 text-gray-700 text-xs">
+                    <div class="flex flex-col md:flex-row gap-8">
+                        <div>
+                            <h3 class="text-red-500 font-bold text-lg mb-2">Restaurant<br>Preview<br>PRO</h3>
+                        </div>
+                        
+                        <div class="flex-1">
+                            <h4 class="font-bold mb-1">PARTNERS</h4>
+                            <p class="leading-relaxed opacity-70">
+                                NAME 1 | NAME 2 | NAME 3 | NAME 4 | NAME 5 | NAME 6 | NAME 7 | NAME 8 | NAME 9 | NAME 10
+                            </p>
+                        </div>
+
+                        <div class="flex-1">
+                            <h4 class="font-bold mb-1">US</h4>
+                            <p class="leading-relaxed opacity-70">
+                                NAME 1 | NAME 2 | NAME 3 | NAME 4 | NAME 5 | NAME 6 | NAME 7 | NAME 8 | NAME 9 | NAME 10
+                            </p>
+                        </div>
+
+                         <div class="flex-1">
+                            <h4 class="font-bold mb-1">ABOUT US</h4>
+                            <p class="leading-relaxed opacity-70">
+                                We are cool
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
-
-        <!-- No Results -->
-        <div id="no-results" class="hidden bg-white rounded-2xl shadow-xl p-12 text-center">
-            <div class="text-6xl mb-4">😔</div>
-            <h2 class="text-2xl font-bold text-gray-800 mb-2">No restaurants found</h2>
-            <p class="text-gray-600">Try searching with a different location</p>
-        </div>
-
-        <!-- Restaurants Grid -->
-        <div id="restaurants-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
     </div>
 
     <script>
+        // Floor grid configurations
+        const floorGrids = [
+            { id: 'floor-3-left-grid', cols: 4, isBlue: false },
+            { id: 'floor-2-left-grid', cols: 1, isBlue: false },
+            { id: 'floor-1-left-grid', cols: 4, isBlue: false },
+            { id: 'floor-g-left-grid', cols: 4, isBlue: false },
+            { id: 'floor-b1-left-grid', cols: 4, isBlue: false },
+            { id: 'floor-1-red-grid', cols: 1, isBlue: false, isRed: true },
+            { id: 'floor-5-right-grid', cols: 6, isBlue: true },
+            { id: 'floor-3-right-grid', cols: 6, isBlue: true },
+            { id: 'floor-g-right-grid', cols: 2, isBlue: true, isHorizontal: true },
+            { id: 'floor-1-right-grid', cols: 3, isBlue: true, isHorizontal: true },
+            { id: 'floor-2-right-grid', cols: 3, isBlue: true, isHorizontal: true },
+            { id: 'floor-b1-right-grid', cols: 6, isBlue: true }
+        ];
+
         function showError(message) {
             const errorDiv = document.getElementById('error');
-            const errorP = errorDiv.querySelector('p');
-            errorP.textContent = message;
+            errorDiv.textContent = message;
             errorDiv.classList.remove('hidden');
             setTimeout(() => {
                 errorDiv.classList.add('hidden');
@@ -203,31 +304,107 @@
 
         function formatDistance(distanceKm) {
             if (distanceKm < 1.0) {
-                return Math.round(distanceKm * 1000) + ' m';
+                return Math.round(distanceKm * 1000) + 'm';
             }
-            return distanceKm.toFixed(2) + ' km';
+            return distanceKm.toFixed(2) + 'km';
         }
 
         function getRestaurantImageUrl(restaurant) {
-            // Use Google Maps Static API to generate a map thumbnail
-            // You can also use a placeholder service or food image API
-            const size = '400x300';
-            const zoom = 15;
-            const marker = `${restaurant.Latitude},${restaurant.Longitude}`;
+            // Use a simple approach - create a colored gradient based on restaurant name
+            const hash = restaurant.Name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+            const hue = hash % 360;
+            return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="hsl(${hue}, 70%, 50%)"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-size="24" font-weight="bold">${restaurant.Name}</text></svg>`)}`;
+        }
+
+        function createRestaurantBox(restaurant, index, isBlue = false, isRed = false) {
+            const box = document.createElement('div');
+            box.className = 'restaurant-box flex flex-col gap-1 w-full aspect-[4/3]';
             
-            // Option 1: Google Maps Static API (requires API key, but works without for basic usage)
-            // return `https://maps.googleapis.com/maps/api/staticmap?center=${restaurant.Latitude},${restaurant.Longitude}&zoom=${zoom}&size=${size}&markers=color:red%7C${marker}&key=YOUR_API_KEY`;
+            const mapsURL = `https://www.google.com/maps/search/?api=1&query=${restaurant.Latitude},${restaurant.Longitude}`;
             
-            // Option 2: Use a placeholder service with food theme
-            // Using Unsplash Source for food images (free, no API key needed)
-            const foodKeywords = ['restaurant', 'food', 'dining', 'cuisine', 'meal'];
-            const randomKeyword = foodKeywords[Math.floor(Math.random() * foodKeywords.length)];
-            return `https://source.unsplash.com/400x300/?${randomKeyword},restaurant&sig=${restaurant.Latitude}`;
+            // Add image
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'schematic-img w-full h-[70%] rounded-sm border border-black/5 relative overflow-hidden';
             
-            // Option 3: Simple colored gradient based on restaurant name
-            // const hash = restaurant.Name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-            // const hue = hash % 360;
-            // return `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'><rect width='400' height='300' fill='hsl(${hue}, 70%, 50%)'/><text x='50%' y='50%' text-anchor='middle' dy='.3em' fill='white' font-size='24' font-weight='bold'>${encodeURIComponent(restaurant.Name)}</text></svg>`;
+            const img = document.createElement('img');
+            img.src = getRestaurantImageUrl(restaurant);
+            img.className = 'w-full h-full object-cover';
+            img.alt = restaurant.Name;
+            img.onerror = function() {
+                this.style.display = 'none';
+            };
+            imgContainer.appendChild(img);
+            
+            // Add rating badge if available
+            if (restaurant.Rating > 0) {
+                const ratingBadge = document.createElement('div');
+                ratingBadge.className = 'absolute top-1 left-1 bg-yellow-400 text-yellow-900 text-[8px] font-bold px-1.5 py-0.5 rounded';
+                ratingBadge.textContent = `⭐ ${restaurant.Rating.toFixed(1)}`;
+                imgContainer.appendChild(ratingBadge);
+            }
+            
+            box.appendChild(imgContainer);
+
+            // Add text label
+            const textLabel = document.createElement('div');
+            textLabel.textContent = restaurant.Name;
+            textLabel.className = 'text-[9px] font-bold leading-tight truncate text-center';
+            
+            if (isRed) {
+                textLabel.classList.add('text-red-600');
+            } else if (isBlue) {
+                textLabel.classList.add('text-white');
+            } else {
+                textLabel.classList.add('text-gray-800');
+            }
+            
+            box.appendChild(textLabel);
+
+            // Add distance info
+            const distanceLabel = document.createElement('div');
+            distanceLabel.textContent = formatDistance(restaurant.Distance);
+            distanceLabel.className = 'text-[7px] text-gray-500 text-center';
+            box.appendChild(distanceLabel);
+
+            // Add click handler to open maps
+            box.onclick = () => window.open(mapsURL, '_blank');
+            box.title = `${restaurant.Name}\n${restaurant.Address || 'No address'}\nDistance: ${formatDistance(restaurant.Distance)}`;
+
+            return box;
+        }
+
+        function clearAllGrids() {
+            floorGrids.forEach(grid => {
+                const element = document.getElementById(grid.id);
+                if (element) {
+                    element.innerHTML = '';
+                }
+            });
+        }
+
+        function populateGrids(restaurants) {
+            clearAllGrids();
+            
+            let restaurantIndex = 0;
+            
+            floorGrids.forEach(grid => {
+                const element = document.getElementById(grid.id);
+                if (!element) return;
+                
+                const maxItems = grid.isHorizontal ? grid.cols : grid.cols * 2; // Allow 2 rows for vertical grids
+                const itemsToAdd = Math.min(maxItems, restaurants.length - restaurantIndex);
+                
+                for (let i = 0; i < itemsToAdd && restaurantIndex < restaurants.length; i++) {
+                    const box = createRestaurantBox(
+                        restaurants[restaurantIndex], 
+                        restaurantIndex, 
+                        grid.isBlue, 
+                        grid.isRed || false
+                    );
+                    element.appendChild(box);
+                    restaurantIndex++;
+                }
+            });
         }
 
         function searchRestaurants() {
@@ -240,8 +417,7 @@
             }
 
             showLoading(true);
-            document.getElementById('restaurants-list').innerHTML = '';
-            document.getElementById('no-results').classList.add('hidden');
+            clearAllGrids();
 
             fetch(`/api/restaurants?lat=${lat}&lon=${lon}`)
                 .then(response => {
@@ -255,72 +431,11 @@
                 .then(restaurants => {
                     showLoading(false);
                     if (restaurants.length === 0) {
-                        document.getElementById('no-results').classList.remove('hidden');
+                        showError('No restaurants found. Try a different location.');
                         return;
                     }
 
-                    const listDiv = document.getElementById('restaurants-list');
-                    restaurants.forEach((restaurant, index) => {
-                        const card = document.createElement('div');
-                        card.className = 'restaurant-card bg-white rounded-2xl shadow-xl overflow-hidden fade-in';
-                        card.style.animationDelay = `${index * 0.1}s`;
-
-                        const mapsURL = `https://www.google.com/maps/search/?api=1&query=${restaurant.Latitude},${restaurant.Longitude}`;
-                        const imageUrl = getRestaurantImageUrl(restaurant);
-
-                        card.innerHTML = `
-                            <div class="restaurant-image h-48 relative">
-                                <img 
-                                    src="${imageUrl}" 
-                                    alt="${restaurant.Name}"
-                                    class="w-full h-full object-cover"
-                                    onerror="this.src='data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'400\' height=\'300\'><rect width=\'400\' height=\'300\' fill=\'%23667eea\'/><text x=\'50%25\' y=\'50%25\' text-anchor=\'middle\' dy=\'.3em\' fill=\'white\' font-size=\'20\' font-weight=\'bold\'>${restaurant.Name}</text></svg>'"
-                                >
-                                <div class="absolute top-4 right-4">
-                                    <div class="bg-white/90 backdrop-blur-sm rounded-full w-10 h-10 flex items-center justify-center font-bold text-purple-600 shadow-lg">
-                                        ${index + 1}
-                                    </div>
-                                </div>
-                                ${restaurant.Rating > 0 ? `
-                                    <div class="absolute bottom-4 left-4">
-                                        <div class="rating-badge text-white px-3 py-1.5 rounded-full text-sm font-semibold shadow-lg flex items-center gap-1">
-                                            <span>⭐</span>
-                                            <span>${restaurant.Rating.toFixed(1)}</span>
-                                        </div>
-                                    </div>
-                                ` : ''}
-                            </div>
-                            <div class="p-6">
-                                <h3 class="text-xl font-bold text-gray-800 mb-3 line-clamp-2">
-                                    ${restaurant.Name}
-                                </h3>
-                                <div class="space-y-2 mb-4">
-                                    <div class="flex items-center gap-2 text-gray-600">
-                                        <span class="text-lg">📍</span>
-                                        <span class="distance-badge text-white px-3 py-1 rounded-full text-xs font-semibold">
-                                            ${formatDistance(restaurant.Distance)} away
-                                        </span>
-                                    </div>
-                                    ${restaurant.Address ? `
-                                        <div class="flex items-start gap-2 text-gray-600 text-sm">
-                                            <span class="text-base mt-0.5">📌</span>
-                                            <span class="flex-1">${restaurant.Address}</span>
-                                        </div>
-                                    ` : ''}
-                                </div>
-                                <a 
-                                    href="${mapsURL}" 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    class="block w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-center font-semibold py-3 px-4 rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                                >
-                                    🔗 View on Maps
-                                </a>
-                            </div>
-                        `;
-
-                        listDiv.appendChild(card);
-                    });
+                    populateGrids(restaurants);
                 })
                 .catch(error => {
                     showLoading(false);
