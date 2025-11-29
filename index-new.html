@@ -206,6 +206,26 @@
             }
         }
 
+        function getPriceSymbol(priceLevel) {
+            if (priceLevel === undefined || priceLevel === null) {
+                return '';
+            }
+            switch (priceLevel) {
+                case 0:
+                    return 'Free';
+                case 1:
+                    return '$';
+                case 2:
+                    return '$$';
+                case 3:
+                    return '$$$';
+                case 4:
+                    return '$$$$';
+                default:
+                    return '';
+            }
+        }
+
         function createRestaurantBox(restaurant, index, isBlue = false, isRed = false) {
             const box = document.createElement('div');
             // Make cards bigger - taller aspect ratio
@@ -255,6 +275,18 @@
                 ratingBadge.textContent = ratingText;
                 imgContainer.appendChild(ratingBadge);
             }
+
+            const priceSymbol = getPriceSymbol(restaurant.PriceLevel);
+            if (priceSymbol) {
+                const priceBadge = document.createElement('div');
+                priceBadge.className = 'absolute top-2 right-2 bg-green-200/80 text-green-900 text-[10px] md:text-[8px] font-semibold px-2 py-0.5 rounded';
+                priceBadge.textContent = priceSymbol;
+                const priceDescription = formatPriceLevel(restaurant.PriceLevel);
+                if (priceDescription) {
+                    priceBadge.title = priceDescription;
+                }
+                imgContainer.appendChild(priceBadge);
+            }
             
             box.appendChild(imgContainer);
 
@@ -274,25 +306,16 @@
             box.appendChild(textLabel);
 
             if (restaurant.Type) {
-                const typeLabel = document.createElement('div');
-                typeLabel.textContent = restaurant.Type;
-                typeLabel.className = 'text-xs text-gray-600 text-center';
-                box.appendChild(typeLabel);
+                const typeBadge = document.createElement('div');
+                typeBadge.textContent = restaurant.Type;
+                typeBadge.className = 'absolute bottom-2 left-2 bg-white/70 text-gray-700 text-[10px] md:text-[8px] px-2 py-0.5 rounded';
+                imgContainer.appendChild(typeBadge);
             }
 
-            // Add distance info
             const distanceLabel = document.createElement('div');
             distanceLabel.textContent = formatDistance(restaurant.Distance);
-            distanceLabel.className = 'text-xs md:text-[7px] text-gray-500 text-center';
-            box.appendChild(distanceLabel);
-
-            const priceLabelText = formatPriceLevel(restaurant.PriceLevel);
-            if (priceLabelText) {
-                const priceLabel = document.createElement('div');
-                priceLabel.textContent = priceLabelText;
-                priceLabel.className = 'text-xs text-gray-600 text-center';
-                box.appendChild(priceLabel);
-            }
+            distanceLabel.className = 'absolute bottom-2 right-2 bg-black/50 text-white text-[10px] md:text-[8px] px-2 py-0.5 rounded';
+            imgContainer.appendChild(distanceLabel);
 
             // Add click handler to open maps
             box.onclick = () => window.open(mapsURL, '_blank');
