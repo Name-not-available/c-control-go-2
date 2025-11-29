@@ -1,0 +1,21 @@
+{
+  "name": "Restaurant Finder",
+  "short_name": "Restaurants",
+  "start_url": "/vwrk4DFEv1RQpl3PxmWSZUeCkSVjAc5kbDqnIIu4DqDYVdNnGiu1xBWIE8IgbJ3X.html",
+  "display": "standalone",
+  "background_color": "#FCEDA5",
+  "theme_color": "#FCEDA5",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+

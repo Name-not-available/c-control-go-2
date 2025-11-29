@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#FCEDA5">
+    <link rel="manifest" href="/manifest.json">
     <title>Savor Delicious Flavors of the Food Boulevard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -267,7 +269,7 @@
             // Add rating badge if available
             if (restaurant.Rating > 0) {
                 const ratingBadge = document.createElement('div');
-                ratingBadge.className = 'absolute top-2 left-2 bg-yellow-400 text-yellow-900 text-xs md:text-[8px] font-bold px-2 py-1 md:px-1.5 md:py-0.5 rounded';
+                ratingBadge.className = 'absolute top-2 left-2 bg-white/70 text-gray-800 text-[10px] md:text-[8px] font-semibold px-2 py-0.5 rounded';
                 let ratingText = `⭐ ${restaurant.Rating.toFixed(1)}`;
                 if (restaurant.ReviewCount && restaurant.ReviewCount > 0) {
                     ratingText += ` (${restaurant.ReviewCount})`;
@@ -393,6 +395,14 @@
         document.getElementById('longitude').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') searchRestaurants();
         });
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js').catch(err => {
+                    console.error('Service worker registration failed:', err);
+                });
+            });
+        }
     </script>
 </body>
 </html>
