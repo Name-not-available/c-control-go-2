@@ -101,137 +101,15 @@
         </div>
 
         <!-- Content Area -->
-        <div class="flex flex-col md:flex-row h-full">
+        <div class="flex flex-col h-full">
             
-            <!-- LEFT COLUMN (Yellow) -->
-            <div class="w-full md:w-[40%] bg-[#FCEDA5] flex flex-col relative" id="left-column">
+            <!-- MAIN COLUMN (Yellow) -->
+            <div class="w-full bg-[#FCEDA5] flex flex-col relative" id="left-column">
                 
                 <!-- Floor 3 -->
-                <div class="flex p-4 border-b border-yellow-300/50" id="floor-3-left">
-                    <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2" id="floor-3-left-grid">
+                <div class="flex p-4" id="floor-3-left">
+                    <div class="flex-1 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2" id="floor-3-left-grid">
                         <!-- Restaurants will be populated here -->
-                    </div>
-                </div>
-
-                <!-- Floor 2 & 1 Row -->
-                <div class="flex p-4 border-b border-yellow-300/50">
-                    <!-- Floor 2 -->
-                    <div class="flex items-start mr-4">
-                        <div class="w-20 md:w-20">
-                            <div class="flex-1 grid grid-cols-1 gap-2" id="floor-2-left-grid">
-                                <!-- Restaurants will be populated here -->
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Floor 1 -->
-                    <div class="flex items-start flex-1">
-                        <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2" id="floor-1-left-grid">
-                            <!-- Restaurants will be populated here -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Floor G -->
-                <div class="flex p-4 border-b border-yellow-300/50" id="floor-g-left">
-                    <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2" id="floor-g-left-grid">
-                        <!-- Restaurants will be populated here -->
-                    </div>
-                </div>
-
-                <!-- Floor B1 -->
-                <div class="flex p-4 flex-1" id="floor-b1-left">
-                    <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2" id="floor-b1-left-grid">
-                        <!-- Restaurants will be populated here -->
-                    </div>
-                </div>
-
-                 <!-- Floor 1 Red Footer -->
-                 <div class="bg-[#D93846] p-4 flex text-white mt-auto">
-                    <div class="w-32">
-                        <div id="floor-1-red-grid" class="grid grid-cols-1 gap-2">
-                            <!-- Restaurants will be populated here -->
-                        </div>
-                    </div>
-                 </div>
-
-            </div>
-
-            <!-- RIGHT COLUMN (Blue) -->
-            <div class="w-full md:w-[60%] bg-[#6BB5F6] flex flex-col" id="right-column">
-                
-                <!-- Floor 5 -->
-                <div class="flex p-4 border-b border-blue-400/50" id="floor-5-right">
-                    <div class="flex-1 grid grid-cols-2 md:grid-cols-6 gap-2" id="floor-5-right-grid">
-                        <!-- Restaurants will be populated here -->
-                    </div>
-                </div>
-
-                <!-- Floor 3 -->
-                <div class="flex p-4 border-b border-blue-400/50" id="floor-3-right">
-                    <div class="flex-1 grid grid-cols-2 md:grid-cols-6 gap-2" id="floor-3-right-grid">
-                        <!-- Restaurants will be populated here -->
-                    </div>
-                </div>
-
-                <!-- Row for G, 1, 2 -->
-                <div class="flex p-4 border-b border-blue-400/50 items-center">
-                    
-                    <!-- G -->
-                    <div class="flex flex-col items-center mr-6">
-                        <div class="grid grid-cols-2 md:flex md:gap-2" id="floor-g-right-grid">
-                            <!-- Restaurants will be populated here -->
-                        </div>
-                    </div>
-
-                    <!-- 1 -->
-                    <div class="flex flex-col items-center mr-6 border-l border-blue-400/50 pl-6">
-                         <div class="grid grid-cols-2 md:flex md:gap-2" id="floor-1-right-grid">
-                            <!-- Restaurants will be populated here -->
-                         </div>
-                    </div>
-
-                    <!-- 2 -->
-                    <div class="flex flex-col items-center border-l border-blue-400/50 pl-6">
-                         <div class="grid grid-cols-2 md:flex md:gap-2" id="floor-2-right-grid">
-                            <!-- Restaurants will be populated here -->
-                         </div>
-                    </div>
-                </div>
-
-                <!-- Floor B1 -->
-                <div class="flex p-4" id="floor-b1-right">
-                    <div class="flex-1 grid grid-cols-2 md:grid-cols-6 gap-2" id="floor-b1-right-grid">
-                        <!-- Restaurants will be populated here -->
-                    </div>
-                </div>
-
-                <!-- Footer Depachika -->
-                <div class="mt-auto bg-[#D6EAF8] p-6 text-gray-700 text-xs">
-                    <div class="flex flex-col md:flex-row gap-8">
-                        <div>
-                            <h3 class="text-red-500 font-bold text-lg mb-2">Restaurant<br>Preview<br>PRO</h3>
-                        </div>
-                        
-                        <div class="flex-1">
-                            <h4 class="font-bold mb-1">PARTNERS</h4>
-                            <p class="leading-relaxed opacity-70">
-                                NAME 1 | NAME 2 | NAME 3 | NAME 4 | NAME 5 | NAME 6 | NAME 7 | NAME 8 | NAME 9 | NAME 10
-                            </p>
-                        </div>
-
-                        <div class="flex-1">
-                            <h4 class="font-bold mb-1">US</h4>
-                            <p class="leading-relaxed opacity-70">
-                                NAME 1 | NAME 2 | NAME 3 | NAME 4 | NAME 5 | NAME 6 | NAME 7 | NAME 8 | NAME 9 | NAME 10
-                            </p>
-                        </div>
-
-                         <div class="flex-1">
-                            <h4 class="font-bold mb-1">ABOUT US</h4>
-                            <p class="leading-relaxed opacity-70">
-                                We are cool
-                            </p>
-                        </div>
                     </div>
                 </div>
 
@@ -240,20 +118,9 @@
     </div>
 
     <script>
-        // Floor grid configurations
+        // Floor grid configuration - only floor-3-left
         const floorGrids = [
-            { id: 'floor-3-left-grid', cols: 4, isBlue: false },
-            { id: 'floor-2-left-grid', cols: 1, isBlue: false },
-            { id: 'floor-1-left-grid', cols: 4, isBlue: false },
-            { id: 'floor-g-left-grid', cols: 4, isBlue: false },
-            { id: 'floor-b1-left-grid', cols: 4, isBlue: false },
-            { id: 'floor-1-red-grid', cols: 1, isBlue: false, isRed: true },
-            { id: 'floor-5-right-grid', cols: 6, isBlue: true },
-            { id: 'floor-3-right-grid', cols: 6, isBlue: true },
-            { id: 'floor-g-right-grid', cols: 2, isBlue: true, isHorizontal: true },
-            { id: 'floor-1-right-grid', cols: 3, isBlue: true, isHorizontal: true },
-            { id: 'floor-2-right-grid', cols: 3, isBlue: true, isHorizontal: true },
-            { id: 'floor-b1-right-grid', cols: 6, isBlue: true }
+            { id: 'floor-3-left-grid', cols: 6, isBlue: false }
         ];
 
         function showError(message) {
@@ -387,36 +254,27 @@
         }
 
         function clearAllGrids() {
-            floorGrids.forEach(grid => {
-                const element = document.getElementById(grid.id);
-                if (element) {
-                    element.innerHTML = '';
-                }
-            });
+            const element = document.getElementById('floor-3-left-grid');
+            if (element) {
+                element.innerHTML = '';
+            }
         }
 
         function populateGrids(restaurants) {
             clearAllGrids();
             
-            let restaurantIndex = 0;
+            // Put all restaurants in floor-3-left-grid
+            const element = document.getElementById('floor-3-left-grid');
+            if (!element) return;
             
-            floorGrids.forEach(grid => {
-                const element = document.getElementById(grid.id);
-                if (!element) return;
-                
-                const maxItems = grid.isHorizontal ? grid.cols : grid.cols * 2; // Allow 2 rows for vertical grids
-                const itemsToAdd = Math.min(maxItems, restaurants.length - restaurantIndex);
-                
-                for (let i = 0; i < itemsToAdd && restaurantIndex < restaurants.length; i++) {
-                    const box = createRestaurantBox(
-                        restaurants[restaurantIndex], 
-                        restaurantIndex, 
-                        grid.isBlue, 
-                        grid.isRed || false
-                    );
-                    element.appendChild(box);
-                    restaurantIndex++;
-                }
+            restaurants.forEach((restaurant, index) => {
+                const box = createRestaurantBox(
+                    restaurant, 
+                    index, 
+                    false, // isBlue
+                    false  // isRed
+                );
+                element.appendChild(box);
             });
         }
 

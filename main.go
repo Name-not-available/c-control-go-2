@@ -283,15 +283,10 @@ func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64) ([]Restaura
 	// Deduplicate restaurants based on name and location (within 50m)
 	deduplicated := deduplicateRestaurants(allRestaurants)
 
-	// Sort by distance
-	sortRestaurantsByDistance(deduplicated, lat, lon)
+	// Sort by rating (highest first), then by distance for same ratings
+	sortRestaurantsByRating(deduplicated)
 
-	// Limit to top 10 results
-	maxResults := 10
-	if len(deduplicated) > maxResults {
-		deduplicated = deduplicated[:maxResults]
-	}
-
+	// Return all results (no limit)
 	return deduplicated, nil
 }
 
