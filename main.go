@@ -776,6 +776,14 @@ func main() {
 			json.NewEncoder(w).Encode(restaurants)
 		})
 
+		// Serve index-new.html
+		http.HandleFunc("/new", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "index-new.html")
+		})
+		http.HandleFunc("/index-new.html", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "index-new.html")
+		})
+
 		// Serve HTML page
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/" {
