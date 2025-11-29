@@ -337,6 +337,23 @@ func sortRestaurantsByDistance(restaurants []Restaurant, userLat, userLon float6
 	}
 }
 
+// sortRestaurantsByRating sorts restaurants by rating (highest first), then by distance for same ratings
+func sortRestaurantsByRating(restaurants []Restaurant) {
+	for i := 0; i < len(restaurants)-1; i++ {
+		for j := i + 1; j < len(restaurants); j++ {
+			// Sort by rating (descending)
+			if restaurants[i].Rating < restaurants[j].Rating {
+				restaurants[i], restaurants[j] = restaurants[j], restaurants[i]
+			} else if restaurants[i].Rating == restaurants[j].Rating {
+				// If ratings are equal, sort by distance (ascending)
+				if restaurants[i].Distance > restaurants[j].Distance {
+					restaurants[i], restaurants[j] = restaurants[j], restaurants[i]
+				}
+			}
+		}
+	}
+}
+
 func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restaurant, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
@@ -351,38 +368,59 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 		Language: "en",
 	}
 
-	resp, err := rb.mapsClient.NearbySearch(ctx, request)
-	if err != nil {
-		return nil, fmt.Errorf("nearby search failed: %w", err)
-	}
+	// Collect all restaurants from all pages (up to 60 results)
+	allRestaurants := make([]Restaurant, 0)
+	var nextPageToken string
 
-	// Convert to unified Restaurant format
-	restaurants := make([]Restaurant, 0, len(resp.Results))
-	maxResults := 10
-	for i, place := range resp.Results {
-		if i >= maxResults {
+	for page := 0; page < 3; page++ { // Maximum 3 pages (60 results)
+		if page > 0 {
+			// Brief delay before requesting next page
+			time.Sleep(100 * time.Millisecond) // 0.1 second
+			request.PageToken = nextPageToken
+		}
+
+		resp, err := rb.mapsClient.NearbySearch(ctx, request)
+		if err != nil {
+			if page == 0 {
+				return nil, fmt.Errorf("nearby search failed: %w", err)
+			}
+			// If pagination fails, return what we have
 			break
 		}
-		distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
 
-		// Extract photo reference if available
-		photoRef := ""
-		if len(place.Photos) > 0 {
-			photoRef = place.Photos[0].PhotoReference
+		// Convert to unified Restaurant format
+		for _, place := range resp.Results {
+			distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+
+			// Extract photo reference if available
+			photoRef := ""
+			if len(place.Photos) > 0 {
+				photoRef = place.Photos[0].PhotoReference
+			}
+
+			allRestaurants = append(allRestaurants, Restaurant{
+				Name:           place.Name,
+				Rating:         float64(place.Rating),
+				Latitude:       place.Geometry.Location.Lat,
+				Longitude:      place.Geometry.Location.Lng,
+				Address:        place.Vicinity,
+				Distance:       distance,
+				PhotoReference: photoRef,
+			})
 		}
 
-		restaurants = append(restaurants, Restaurant{
-			Name:           place.Name,
-			Rating:         float64(place.Rating),
-			Latitude:       place.Geometry.Location.Lat,
-			Longitude:      place.Geometry.Location.Lng,
-			Address:        place.Vicinity,
-			Distance:       distance,
-			PhotoReference: photoRef,
-		})
+		// Check if there's a next page
+		if resp.NextPageToken == "" {
+			break
+		}
+		nextPageToken = resp.NextPageToken
 	}
 
-	return restaurants, nil
+	// Sort by rating (highest first), then by distance for same ratings
+	sortRestaurantsByRating(allRestaurants)
+
+	// Return all results (up to 60)
+	return allRestaurants, nil
 }
 
 func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64) ([]Restaurant, error) {
@@ -830,11 +868,8 @@ func main() {
 			}
 		})
 
-		// Serve index-new.html
-		http.HandleFunc("/new", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, "index-new.html")
-		})
-		http.HandleFunc("/index-new.html", func(w http.ResponseWriter, r *http.Request) {
+		// Serve index-new.html at hard-to-find URL
+		http.HandleFunc("/vwrk4DFEv1RQpl3PxmWSZUeCkSVjAc5kbDqnIIu4DqDYVdNnGiu1xBWIE8IgbJ3X.html", func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFile(w, r, "index-new.html")
 		})
 
