@@ -49,6 +49,8 @@ type Restaurant struct {
 	Name           string  `json:"Name"`
 	Rating         float64 `json:"Rating"`
 	ReviewCount    int     `json:"ReviewCount,omitempty"`
+	PriceLevel     int     `json:"PriceLevel,omitempty"`
+	Type           string  `json:"Type,omitempty"`
 	Latitude       float64 `json:"Latitude"`
 	Longitude      float64 `json:"Longitude"`
 	Address        string  `json:"Address"`
@@ -417,10 +419,15 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 				reviewCount = place.UserRatingsTotal
 			}
 
+			priceLevel := place.PriceLevel
+			placeType := formatPlaceType(place.Types)
+
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
 				Rating:         float64(place.Rating),
 				ReviewCount:    reviewCount,
+				PriceLevel:     priceLevel,
+				Type:           placeType,
 				Latitude:       place.Geometry.Location.Lat,
 				Longitude:      place.Geometry.Location.Lng,
 				Address:        place.Vicinity,
@@ -523,6 +530,8 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64) ([]Restauran
 			name = elem.Tags["amenity"] // Fallback to amenity type
 		}
 
+		restaurantType := formatAmenityType(elem.Tags["amenity"])
+
 		// Calculate distance
 		distance := calculateDistance(lat, lon, elemLat, elemLon)
 
@@ -550,6 +559,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64) ([]Restauran
 			Latitude:  elemLat,
 			Longitude: elemLon,
 			Address:   address,
+			Type:      restaurantType,
 			Distance:  distance,
 		})
 	}
@@ -940,4 +950,32 @@ func main() {
 		log.Printf("HTTP server running. Telegram bot disabled.")
 		select {} // Block forever to keep HTTP server running
 	}
+}
+
+// formatPlaceType converts Google place types (e.g., "health_food_store") into readable text.
+func formatPlaceType(placeTypes []string) string {
+	if len(placeTypes) == 0 {
+		return ""
+	}
+	return formatTypeString(placeTypes[0])
+}
+
+// formatAmenityType converts OSM amenity strings into readable text.
+func formatAmenityType(amenity string) string {
+	if amenity == "" {
+		return ""
+	}
+	return formatTypeString(amenity)
+}
+
+func formatTypeString(value string) string {
+	value = strings.ReplaceAll(value, "_", " ")
+	parts := strings.Fields(value)
+	for i, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
+	}
+	return strings.Join(parts, " ")
 }
