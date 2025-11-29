@@ -381,13 +381,19 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 
 	for page := 0; page < 3; page++ { // Maximum 3 pages (60 results)
 		if page > 0 {
-			// Brief delay before requesting next page
-			time.Sleep(100 * time.Millisecond) // 0.1 second
 			request.PageToken = nextPageToken
+			// wait for next_page_token to become active
+			time.Sleep(2 * time.Second)
 		}
 
 		resp, err := rb.mapsClient.NearbySearch(ctx, request)
 		if err != nil {
+			if page > 0 && strings.Contains(strings.ToLower(err.Error()), "invalid_request") {
+				// next_page_token not ready yet, wait longer and retry same page
+				time.Sleep(2 * time.Second)
+				page--
+				continue
+			}
 			if page == 0 {
 				return nil, fmt.Errorf("nearby search failed: %w", err)
 			}

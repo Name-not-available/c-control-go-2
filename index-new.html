@@ -197,7 +197,8 @@
                 // Use the correct Google Maps URL format for place_id
                 mapsURL = `https://www.google.com/maps/search/?api=1&query_place_id=${restaurant.PlaceID}`;
             } else {
-                mapsURL = `https://www.google.com/maps/search/?api=1&query=${restaurant.Latitude},${restaurant.Longitude}`;
+                const searchQuery = encodeURIComponent(`${restaurant.Name || 'Restaurant'} ${restaurant.Latitude},${restaurant.Longitude}`);
+                mapsURL = `https://www.google.com/maps/search/?api=1&query=${searchQuery}`;
             }
             
             // Add image - make it bigger
