@@ -477,14 +477,45 @@ func sortRestaurantsByDistance(restaurants []Restaurant, userLat, userLon float6
 }
 
 // sortRestaurantsByRating sorts restaurants by rating (highest first), then by distance for same ratings
+// calculateWeightedScore computes a confidence-weighted rating score
+// Uses Bayesian average: considers both rating AND number of reviews
+// A 5-star with 1 review will score lower than 4.8-star with 10,000 reviews
+func calculateWeightedScore(rating float64, reviewCount int) float64 {
+	// Bayesian average formula: (v*R + m*C) / (v + m)
+	// Where:
+	//   R = restaurant's rating
+	//   v = number of reviews
+	//   m = minimum reviews needed for "full confidence" (threshold)
+	//   C = prior mean (what we assume with no data - neutral rating)
+	
+	const (
+		m = 15.0  // minimum reviews for full confidence
+		C = 3.5   // prior/neutral rating (slightly below average)
+	)
+	
+	v := float64(reviewCount)
+	R := rating
+	
+	// Bayesian weighted average
+	// With few reviews, score pulls toward C (3.5)
+	// With many reviews, score approaches actual rating R
+	weightedRating := (v*R + m*C) / (v + m)
+	
+	return weightedRating
+}
+
 func sortRestaurantsByRating(restaurants []Restaurant) {
+	// Sort by weighted score (considers both rating AND review count)
 	for i := 0; i < len(restaurants)-1; i++ {
 		for j := i + 1; j < len(restaurants); j++ {
-			// Sort by rating (descending)
-			if restaurants[i].Rating < restaurants[j].Rating {
+			scoreI := calculateWeightedScore(restaurants[i].Rating, restaurants[i].ReviewCount)
+			scoreJ := calculateWeightedScore(restaurants[j].Rating, restaurants[j].ReviewCount)
+			
+			// Sort by weighted score (descending)
+			if scoreI < scoreJ {
 				restaurants[i], restaurants[j] = restaurants[j], restaurants[i]
-			} else if restaurants[i].Rating == restaurants[j].Rating {
-				// If ratings are equal, sort by distance (ascending)
+			} else if scoreI == scoreJ {
+				// If scores are equal, sort by distance (ascending)
 				if restaurants[i].Distance > restaurants[j].Distance {
 					restaurants[i], restaurants[j] = restaurants[j], restaurants[i]
 				}
