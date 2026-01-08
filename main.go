@@ -30,13 +30,14 @@ const (
 type FoodCategory string
 
 const (
-	CategoryAll       FoodCategory = "all"
+	CategoryAll        FoodCategory = "all"
 	CategoryRestaurant FoodCategory = "restaurant"
-	CategoryCafe      FoodCategory = "cafe"
-	CategoryBar       FoodCategory = "bar"
-	CategoryTakeaway  FoodCategory = "takeaway"
-	CategoryBakery    FoodCategory = "bakery"
-	CategoryDelivery  FoodCategory = "delivery"
+	CategoryCafe       FoodCategory = "cafe"
+	CategoryBar        FoodCategory = "bar"
+	CategoryTakeaway   FoodCategory = "takeaway"
+	CategoryBakery     FoodCategory = "bakery"
+	CategoryDelivery   FoodCategory = "delivery"
+	CategoryNightclub  FoodCategory = "nightclub"
 )
 
 // categoryToGoogleType maps categories to Google Places types
@@ -47,6 +48,7 @@ var categoryToGoogleType = map[FoodCategory]maps.PlaceType{
 	CategoryTakeaway:   maps.PlaceTypeMealTakeaway,
 	CategoryBakery:     maps.PlaceTypeBakery,
 	CategoryDelivery:   maps.PlaceTypeMealDelivery,
+	CategoryNightclub:  maps.PlaceTypeNightClub,
 }
 
 // categoryToOSMAmenities maps categories to OSM amenity values
@@ -58,6 +60,7 @@ var categoryToOSMAmenities = map[FoodCategory][]string{
 	CategoryTakeaway:   {"fast_food"},
 	CategoryBakery:     {"bakery"},
 	CategoryDelivery:   {"restaurant", "fast_food"}, // OSM doesn't have specific delivery tag
+	CategoryNightclub:  {"nightclub"},
 }
 
 // allFoodCategories lists all categories to search for "all" option
@@ -68,6 +71,43 @@ var allFoodCategories = []FoodCategory{
 	CategoryTakeaway,
 	CategoryBakery,
 	CategoryDelivery,
+}
+
+// Cuisine keywords for more specific searches
+// These are used with Google's Keyword parameter
+var cuisineKeywords = map[string]string{
+	// Diet/Health
+	"healthy":    "healthy food",
+	"vegan":      "vegan",
+	"vegetarian": "vegetarian",
+	"organic":    "organic food",
+	"gluten-free": "gluten free",
+	"halal":      "halal",
+	"kosher":     "kosher",
+	
+	// Cuisines
+	"italian":    "italian",
+	"chinese":    "chinese",
+	"japanese":   "japanese",
+	"sushi":      "sushi",
+	"mexican":    "mexican",
+	"indian":     "indian",
+	"thai":       "thai",
+	"vietnamese": "vietnamese",
+	"korean":     "korean",
+	"french":     "french",
+	"greek":      "greek",
+	"mediterranean": "mediterranean",
+	"american":   "american",
+	"bbq":        "bbq barbecue",
+	"seafood":    "seafood",
+	"steakhouse": "steakhouse steak",
+	"burger":     "burger",
+	"pizza":      "pizza",
+	"ramen":      "ramen",
+	"tacos":      "tacos",
+	"breakfast":  "breakfast brunch",
+	"dessert":    "dessert ice cream",
 }
 
 // validFoodTypes is a whitelist for last-resort post-filtering
@@ -293,26 +333,50 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	rb.sendRestaurantsFromCache(chatID, restaurants, location.Latitude, location.Longitude)
 }
 
-func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
-	// Default to "all" if empty
-	if category == "" {
-		category = CategoryAll
-	}
+// SearchParams holds all search parameters
+type SearchParams struct {
+	Lat        float64
+	Lon        float64
+	Categories []FoodCategory // Multiple categories (e.g., ["restaurant", "cafe"])
+	Keyword    string         // Cuisine/keyword filter (e.g., "vegan", "italian")
+}
 
+func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
+	// Legacy single-category support
+	params := SearchParams{
+		Lat:        lat,
+		Lon:        lon,
+		Categories: []FoodCategory{category},
+	}
+	if category == "" || category == CategoryAll {
+		params.Categories = nil // nil means all
+	}
+	return rb.findNearbyRestaurantsWithParams(params)
+}
+
+func (rb *RestaurantBot) findNearbyRestaurantsWithParams(params SearchParams) ([]Restaurant, error) {
 	switch rb.apiProvider {
 	case "osm":
-		return rb.findNearbyRestaurantsOSM(lat, lon, category)
+		return rb.findNearbyRestaurantsOSMWithParams(params)
 	case "both":
-		return rb.findNearbyRestaurantsBoth(lat, lon, category)
+		return rb.findNearbyRestaurantsBothWithParams(params)
 	case "google":
 		fallthrough
 	default:
-		return rb.findNearbyRestaurantsGoogle(lat, lon, category)
+		return rb.findNearbyRestaurantsGoogleWithParams(params)
 	}
 }
 
 // findNearbyRestaurantsBoth searches both providers in parallel and combines results
 func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
+	params := SearchParams{Lat: lat, Lon: lon, Categories: []FoodCategory{category}}
+	if category == "" || category == CategoryAll {
+		params.Categories = nil
+	}
+	return rb.findNearbyRestaurantsBothWithParams(params)
+}
+
+func (rb *RestaurantBot) findNearbyRestaurantsBothWithParams(params SearchParams) ([]Restaurant, error) {
 	type result struct {
 		restaurants []Restaurant
 		err         error
@@ -327,13 +391,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64, category Fo
 			resultsChan <- result{restaurants: []Restaurant{}, err: nil, source: "google"}
 			return
 		}
-		restaurants, err := rb.findNearbyRestaurantsGoogle(lat, lon, category)
+		restaurants, err := rb.findNearbyRestaurantsGoogleWithParams(params)
 		resultsChan <- result{restaurants: restaurants, err: err, source: "google"}
 	}()
 
 	// Search OpenStreetMap in parallel
 	go func() {
-		restaurants, err := rb.findNearbyRestaurantsOSM(lat, lon, category)
+		restaurants, err := rb.findNearbyRestaurantsOSMWithParams(params)
 		resultsChan <- result{restaurants: restaurants, err: err, source: "osm"}
 	}()
 
@@ -430,35 +494,62 @@ func sortRestaurantsByRating(restaurants []Restaurant) {
 }
 
 func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
-	// For "all" category, search all food types in parallel
-	if category == CategoryAll {
-		return rb.findNearbyRestaurantsGoogleAll(lat, lon)
+	params := SearchParams{Lat: lat, Lon: lon, Categories: []FoodCategory{category}}
+	if category == "" || category == CategoryAll {
+		params.Categories = nil
+	}
+	return rb.findNearbyRestaurantsGoogleWithParams(params)
+}
+
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleWithParams(params SearchParams) ([]Restaurant, error) {
+	// Resolve keyword if it's a known cuisine
+	keyword := params.Keyword
+	if kw, ok := cuisineKeywords[strings.ToLower(keyword)]; ok {
+		keyword = kw
 	}
 
-	// Single category search
-	placeType, ok := categoryToGoogleType[category]
-	if !ok {
-		placeType = maps.PlaceTypeRestaurant // fallback
+	// Determine which categories to search
+	var categoriesToSearch []FoodCategory
+	if len(params.Categories) == 0 {
+		// Search all food categories
+		categoriesToSearch = allFoodCategories
+	} else {
+		categoriesToSearch = params.Categories
 	}
 
-	return rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType)
+	// If only one category and no keyword, use simple search
+	if len(categoriesToSearch) == 1 && keyword == "" {
+		placeType, ok := categoryToGoogleType[categoriesToSearch[0]]
+		if !ok {
+			placeType = maps.PlaceTypeRestaurant
+		}
+		return rb.findNearbyRestaurantsGoogleByType(params.Lat, params.Lon, placeType, "")
+	}
+
+	// Multiple categories or keyword search - search in parallel
+	return rb.findNearbyRestaurantsGoogleMultiple(params.Lat, params.Lon, categoriesToSearch, keyword)
 }
 
 // findNearbyRestaurantsGoogleAll searches all food categories in parallel
 func (rb *RestaurantBot) findNearbyRestaurantsGoogleAll(lat, lon float64) ([]Restaurant, error) {
+	return rb.findNearbyRestaurantsGoogleMultiple(lat, lon, allFoodCategories, "")
+}
+
+// findNearbyRestaurantsGoogleMultiple searches multiple categories in parallel with optional keyword
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, categories []FoodCategory, keyword string) ([]Restaurant, error) {
 	type result struct {
 		restaurants []Restaurant
 		err         error
 		category    FoodCategory
 	}
 
-	resultsChan := make(chan result, len(allFoodCategories))
+	resultsChan := make(chan result, len(categories))
 
 	// Search all categories in parallel
-	for _, cat := range allFoodCategories {
+	for _, cat := range categories {
 		go func(c FoodCategory) {
 			placeType := categoryToGoogleType[c]
-			restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType)
+			restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType, keyword)
 			resultsChan <- result{restaurants: restaurants, err: err, category: c}
 		}(cat)
 	}
@@ -467,7 +558,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleAll(lat, lon float64) ([]Res
 	var allRestaurants []Restaurant
 	var errors []string
 
-	for i := 0; i < len(allFoodCategories); i++ {
+	for i := 0; i < len(categories); i++ {
 		res := <-resultsChan
 		if res.err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", res.category, res.err))
@@ -491,8 +582,8 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleAll(lat, lon float64) ([]Res
 	return deduplicated, nil
 }
 
-// findNearbyRestaurantsGoogleByType searches for a specific place type
-func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, placeType maps.PlaceType) ([]Restaurant, error) {
+// findNearbyRestaurantsGoogleByType searches for a specific place type with optional keyword
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, placeType maps.PlaceType, keyword string) ([]Restaurant, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Longer timeout for pagination
 	defer cancel()
 
@@ -503,6 +594,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 		},
 		Radius:   2000, // 2km radius
 		Type:     placeType,
+		Keyword:  keyword, // Optional keyword for cuisine/diet filtering
 		Language: "en",
 	}
 
@@ -717,6 +809,168 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64, category Foo
 			Distance:  distance,
 		})
 	}
+
+	return restaurants, nil
+}
+
+// findNearbyRestaurantsOSMWithParams searches OSM with full params support
+func (rb *RestaurantBot) findNearbyRestaurantsOSMWithParams(params SearchParams) ([]Restaurant, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	// Collect all amenities from selected categories
+	amenitySet := make(map[string]bool)
+	if len(params.Categories) == 0 {
+		// All categories
+		for _, amenity := range categoryToOSMAmenities[CategoryAll] {
+			amenitySet[amenity] = true
+		}
+	} else {
+		for _, cat := range params.Categories {
+			if amenities, ok := categoryToOSMAmenities[cat]; ok {
+				for _, amenity := range amenities {
+					amenitySet[amenity] = true
+				}
+			}
+		}
+	}
+
+	// Build Overpass API query dynamically
+	radius := 2000 // meters
+	var queryParts []string
+	for amenity := range amenitySet {
+		queryParts = append(queryParts,
+			fmt.Sprintf(`node["amenity"="%s"](around:%d,%.6f,%.6f);`, amenity, radius, params.Lat, params.Lon),
+			fmt.Sprintf(`way["amenity"="%s"](around:%d,%.6f,%.6f);`, amenity, radius, params.Lat, params.Lon),
+		)
+	}
+
+	// Add cuisine filter if keyword is provided
+	keyword := strings.ToLower(params.Keyword)
+	if keyword != "" {
+		// Add cuisine-specific queries
+		queryParts = append(queryParts,
+			fmt.Sprintf(`node["cuisine"~"%s",i](around:%d,%.6f,%.6f);`, keyword, radius, params.Lat, params.Lon),
+			fmt.Sprintf(`way["cuisine"~"%s",i](around:%d,%.6f,%.6f);`, keyword, radius, params.Lat, params.Lon),
+		)
+		// Add diet-specific queries for health keywords
+		if keyword == "vegan" || keyword == "vegetarian" || keyword == "halal" || keyword == "kosher" {
+			queryParts = append(queryParts,
+				fmt.Sprintf(`node["diet:%s"="yes"](around:%d,%.6f,%.6f);`, keyword, radius, params.Lat, params.Lon),
+				fmt.Sprintf(`way["diet:%s"="yes"](around:%d,%.6f,%.6f);`, keyword, radius, params.Lat, params.Lon),
+			)
+		}
+	}
+
+	query := fmt.Sprintf(`
+		[out:json][timeout:15];
+		(
+		  %s
+		);
+		out center meta;
+	`, strings.Join(queryParts, "\n		  "))
+
+	// Use Overpass API endpoint
+	apiURL := "https://overpass-api.de/api/interpreter"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(query))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: requestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("overpass API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("overpass API returned status %d", resp.StatusCode)
+	}
+
+	var overpassResp struct {
+		Elements []struct {
+			Type   string  `json:"type"`
+			ID     int64   `json:"id"`
+			Lat    float64 `json:"lat,omitempty"`
+			Lon    float64 `json:"lon,omitempty"`
+			Center struct {
+				Lat float64 `json:"lat"`
+				Lon float64 `json:"lon"`
+			} `json:"center,omitempty"`
+			Tags map[string]string `json:"tags"`
+		} `json:"elements"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&overpassResp); err != nil {
+		return nil, fmt.Errorf("failed to decode overpass response: %w", err)
+	}
+
+	restaurants := make([]Restaurant, 0)
+	keywordLower := strings.ToLower(params.Keyword)
+
+	for _, elem := range overpassResp.Elements {
+		var elemLat, elemLon float64
+		if elem.Type == "node" {
+			elemLat = elem.Lat
+			elemLon = elem.Lon
+		} else {
+			elemLat = elem.Center.Lat
+			elemLon = elem.Center.Lon
+		}
+
+		// Filter by keyword in name or cuisine if keyword is set
+		if keywordLower != "" {
+			nameMatch := strings.Contains(strings.ToLower(elem.Tags["name"]), keywordLower)
+			cuisineMatch := strings.Contains(strings.ToLower(elem.Tags["cuisine"]), keywordLower)
+			dietMatch := elem.Tags["diet:"+keywordLower] == "yes"
+			if !nameMatch && !cuisineMatch && !dietMatch {
+				continue
+			}
+		}
+
+		name := elem.Tags["name"]
+		if name == "" {
+			name = elem.Tags["amenity"]
+		}
+
+		restaurantType := formatAmenityType(elem.Tags["amenity"])
+		if cuisine := elem.Tags["cuisine"]; cuisine != "" {
+			restaurantType = formatTypeString(cuisine)
+		}
+
+		distance := calculateDistance(params.Lat, params.Lon, elemLat, elemLon)
+
+		rating := 0.0
+		if ratingStr, ok := elem.Tags["rating"]; ok {
+			if r, err := strconv.ParseFloat(ratingStr, 64); err == nil {
+				rating = r
+			}
+		}
+
+		addressParts := []string{}
+		if addr := elem.Tags["addr:street"]; addr != "" {
+			addressParts = append(addressParts, addr)
+		}
+		if houseNum := elem.Tags["addr:housenumber"]; houseNum != "" {
+			addressParts = append(addressParts, houseNum)
+		}
+		address := strings.Join(addressParts, " ")
+
+		restaurants = append(restaurants, Restaurant{
+			Name:      name,
+			Rating:    rating,
+			Latitude:  elemLat,
+			Longitude: elemLon,
+			Address:   address,
+			Type:      restaurantType,
+			Distance:  distance,
+		})
+	}
+
+	// Sort by rating
+	sortRestaurantsByRating(restaurants)
 
 	return restaurants, nil
 }
@@ -968,52 +1222,74 @@ func main() {
 				return
 			}
 
-			// Get lat/lon/category from query params or JSON body
-			var lat, lon float64
-			var category FoodCategory
+			// Get lat/lon/categories/keyword from query params or JSON body
+			var params SearchParams
 			var err error
 
 			if r.Method == "GET" {
 				latStr := r.URL.Query().Get("lat")
 				lonStr := r.URL.Query().Get("lon")
-				categoryStr := r.URL.Query().Get("category")
+				categoriesStr := r.URL.Query().Get("categories") // comma-separated: "restaurant,cafe"
+				keyword := r.URL.Query().Get("keyword")          // cuisine/diet filter
+				
+				// Legacy support: also check "category" (single)
+				if categoriesStr == "" {
+					categoriesStr = r.URL.Query().Get("category")
+				}
+				
 				if latStr == "" || lonStr == "" {
 					http.Error(w, "lat and lon parameters are required", http.StatusBadRequest)
 					return
 				}
-				lat, err = strconv.ParseFloat(latStr, 64)
+				params.Lat, err = strconv.ParseFloat(latStr, 64)
 				if err != nil {
 					http.Error(w, "Invalid lat parameter", http.StatusBadRequest)
 					return
 				}
-				lon, err = strconv.ParseFloat(lonStr, 64)
+				params.Lon, err = strconv.ParseFloat(lonStr, 64)
 				if err != nil {
 					http.Error(w, "Invalid lon parameter", http.StatusBadRequest)
 					return
 				}
-				category = FoodCategory(categoryStr)
+				
+				// Parse categories
+				if categoriesStr != "" && categoriesStr != "all" {
+					for _, c := range strings.Split(categoriesStr, ",") {
+						c = strings.TrimSpace(c)
+						if c != "" {
+							params.Categories = append(params.Categories, FoodCategory(c))
+						}
+					}
+				}
+				params.Keyword = keyword
 			} else {
 				var req struct {
-					Lat      float64 `json:"lat"`
-					Lon      float64 `json:"lon"`
-					Category string  `json:"category"`
+					Lat        float64  `json:"lat"`
+					Lon        float64  `json:"lon"`
+					Categories []string `json:"categories"` // array of categories
+					Category   string   `json:"category"`   // legacy single category
+					Keyword    string   `json:"keyword"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 					return
 				}
-				lat = req.Lat
-				lon = req.Lon
-				category = FoodCategory(req.Category)
+				params.Lat = req.Lat
+				params.Lon = req.Lon
+				params.Keyword = req.Keyword
+				
+				// Support both array and single category
+				if len(req.Categories) > 0 {
+					for _, c := range req.Categories {
+						params.Categories = append(params.Categories, FoodCategory(c))
+					}
+				} else if req.Category != "" && req.Category != "all" {
+					params.Categories = []FoodCategory{FoodCategory(req.Category)}
+				}
 			}
 
-			// Default to "all" if category not specified
-			if category == "" {
-				category = CategoryAll
-			}
-
-			// Find restaurants (no caching by category to keep it simple, or implement category-aware cache)
-			restaurants, err := bot.findNearbyRestaurants(lat, lon, category)
+			// Find restaurants
+			restaurants, err := bot.findNearbyRestaurantsWithParams(params)
 			if err != nil {
 				log.Printf("Error finding restaurants: %v", err)
 				http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)

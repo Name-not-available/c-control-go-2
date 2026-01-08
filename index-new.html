@@ -44,6 +44,20 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .checkbox-pill {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .checkbox-pill.selected {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .checkbox-pill:hover {
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body class="bg-gray-100 p-4 min-h-screen flex justify-center items-start">
@@ -81,18 +95,73 @@
                     class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
                 >
             </div>
+
+            <!-- Place Type Checkboxes -->
+            <div class="mb-3">
+                <span class="text-sm font-semibold text-gray-700 block mb-2">📍 Place Types:</span>
+                <div class="flex flex-wrap gap-2" id="category-checkboxes">
+                    <label class="checkbox-pill selected cursor-pointer px-3 py-1 rounded-full text-sm bg-purple-600 text-white transition-all" data-value="restaurant">
+                        <input type="checkbox" value="restaurant" checked class="hidden"> 🍴 Restaurants
+                    </label>
+                    <label class="checkbox-pill selected cursor-pointer px-3 py-1 rounded-full text-sm bg-purple-600 text-white transition-all" data-value="cafe">
+                        <input type="checkbox" value="cafe" checked class="hidden"> ☕ Cafes
+                    </label>
+                    <label class="checkbox-pill selected cursor-pointer px-3 py-1 rounded-full text-sm bg-purple-600 text-white transition-all" data-value="bar">
+                        <input type="checkbox" value="bar" checked class="hidden"> 🍺 Bars
+                    </label>
+                    <label class="checkbox-pill selected cursor-pointer px-3 py-1 rounded-full text-sm bg-purple-600 text-white transition-all" data-value="takeaway">
+                        <input type="checkbox" value="takeaway" checked class="hidden"> 🍔 Fast Food
+                    </label>
+                    <label class="checkbox-pill selected cursor-pointer px-3 py-1 rounded-full text-sm bg-purple-600 text-white transition-all" data-value="bakery">
+                        <input type="checkbox" value="bakery" checked class="hidden"> 🥐 Bakeries
+                    </label>
+                    <label class="checkbox-pill selected cursor-pointer px-3 py-1 rounded-full text-sm bg-purple-600 text-white transition-all" data-value="delivery">
+                        <input type="checkbox" value="delivery" checked class="hidden"> 🚗 Delivery
+                    </label>
+                </div>
+            </div>
+
             <div class="flex flex-col md:flex-row gap-3">
                 <select 
-                    id="category"
+                    id="keyword"
                     class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none bg-white cursor-pointer"
                 >
-                    <option value="all">🍽️ All Food & Drink</option>
-                    <option value="restaurant">🍴 Restaurants Only</option>
-                    <option value="cafe">☕ Cafes & Coffee</option>
-                    <option value="bar">🍺 Bars & Pubs</option>
-                    <option value="takeaway">🍔 Fast Food / Takeaway</option>
-                    <option value="bakery">🥐 Bakeries</option>
-                    <option value="delivery">🚗 Meal Delivery</option>
+                    <option value="">🍳 Any Cuisine</option>
+                    <optgroup label="🥗 Diet & Health">
+                        <option value="healthy">Healthy Food</option>
+                        <option value="vegan">Vegan</option>
+                        <option value="vegetarian">Vegetarian</option>
+                        <option value="organic">Organic</option>
+                        <option value="gluten-free">Gluten-Free</option>
+                        <option value="halal">Halal</option>
+                        <option value="kosher">Kosher</option>
+                    </optgroup>
+                    <optgroup label="🌍 World Cuisines">
+                        <option value="italian">Italian</option>
+                        <option value="chinese">Chinese</option>
+                        <option value="japanese">Japanese</option>
+                        <option value="sushi">Sushi</option>
+                        <option value="mexican">Mexican</option>
+                        <option value="indian">Indian</option>
+                        <option value="thai">Thai</option>
+                        <option value="vietnamese">Vietnamese</option>
+                        <option value="korean">Korean</option>
+                        <option value="french">French</option>
+                        <option value="greek">Greek</option>
+                        <option value="mediterranean">Mediterranean</option>
+                        <option value="american">American</option>
+                    </optgroup>
+                    <optgroup label="🍕 Popular Types">
+                        <option value="pizza">Pizza</option>
+                        <option value="burger">Burgers</option>
+                        <option value="bbq">BBQ / Barbecue</option>
+                        <option value="seafood">Seafood</option>
+                        <option value="steakhouse">Steakhouse</option>
+                        <option value="ramen">Ramen</option>
+                        <option value="tacos">Tacos</option>
+                        <option value="breakfast">Breakfast & Brunch</option>
+                        <option value="dessert">Desserts & Ice Cream</option>
+                    </optgroup>
                 </select>
                 <button 
                     id="search-btn"
@@ -305,11 +374,39 @@
             return distanceKm.toFixed(2) + 'km';
         }
 
-        function updateURL(lat, lon, category) {
+        // Setup checkbox toggle behavior
+        document.querySelectorAll('.checkbox-pill').forEach(item => {
+            item.addEventListener('click', function(e) {
+                const checkbox = this.querySelector('input[type="checkbox"]');
+                checkbox.checked = !checkbox.checked;
+                this.classList.toggle('selected', checkbox.checked);
+            });
+        });
+
+        function getSelectedCategories() {
+            const checkboxes = document.querySelectorAll('#category-checkboxes input[type="checkbox"]:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function setSelectedCategories(categories) {
+            document.querySelectorAll('#category-checkboxes .checkbox-pill').forEach(item => {
+                const checkbox = item.querySelector('input[type="checkbox"]');
+                const isSelected = categories.includes(checkbox.value);
+                checkbox.checked = isSelected;
+                item.classList.toggle('selected', isSelected);
+            });
+        }
+
+        function updateURL(lat, lon, categories, keyword) {
             const url = new URL(window.location.href);
             url.searchParams.set('lat', lat);
             url.searchParams.set('lon', lon);
-            url.searchParams.set('category', category);
+            url.searchParams.set('categories', categories.join(','));
+            if (keyword) {
+                url.searchParams.set('keyword', keyword);
+            } else {
+                url.searchParams.delete('keyword');
+            }
             window.history.pushState({}, '', url);
             
             // Show share link
@@ -324,13 +421,24 @@
             const params = new URLSearchParams(window.location.search);
             const lat = params.get('lat');
             const lon = params.get('lon');
-            const category = params.get('category');
+            const categories = params.get('categories');
+            const keyword = params.get('keyword');
+            
+            // Legacy support
+            const legacyCategory = params.get('category');
             
             if (lat && lon) {
                 document.getElementById('latitude').value = lat;
                 document.getElementById('longitude').value = lon;
-                if (category) {
-                    document.getElementById('category').value = category;
+                
+                if (categories) {
+                    setSelectedCategories(categories.split(','));
+                } else if (legacyCategory && legacyCategory !== 'all') {
+                    setSelectedCategories([legacyCategory]);
+                }
+                
+                if (keyword) {
+                    document.getElementById('keyword').value = keyword;
                 }
                 return true;
             }
@@ -531,21 +639,33 @@
 
             const lat = parseFloat(document.getElementById('latitude').value);
             const lon = parseFloat(document.getElementById('longitude').value);
-            const category = document.getElementById('category').value;
+            const categories = getSelectedCategories();
+            const keyword = document.getElementById('keyword').value;
 
             if (isNaN(lat) || isNaN(lon)) {
                 showError('Please enter valid latitude and longitude values');
                 return;
             }
 
+            if (categories.length === 0) {
+                showError('Please select at least one place type');
+                return;
+            }
+
             // Update URL for sharing
-            updateURL(lat, lon, category);
+            updateURL(lat, lon, categories, keyword);
 
             isSearchInProgress = true;
             showLoading(true);
             clearAllGrids();
 
-            fetch(`/api/restaurants?lat=${lat}&lon=${lon}&category=${category}`)
+            // Build query URL
+            let url = `/api/restaurants?lat=${lat}&lon=${lon}&categories=${categories.join(',')}`;
+            if (keyword) {
+                url += `&keyword=${encodeURIComponent(keyword)}`;
+            }
+
+            fetch(url)
                 .then(response => {
                     if (!response.ok) {
                         return response.text().then(text => {
