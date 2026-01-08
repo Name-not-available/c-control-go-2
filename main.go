@@ -16,6 +16,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"googlemaps.github.io/maps"
+	"telegram-restaurant-bot/db"
 )
 
 const (
@@ -92,6 +93,7 @@ type RestaurantBot struct {
 	mapsClient  *maps.Client
 	cache       *LocationCache
 	apiProvider string // "google", "osm", or "both"
+	database    *db.DB // Database connection (optional)
 }
 
 // LocationCache stores cached restaurant results
@@ -177,7 +179,7 @@ func (lc *LocationCache) Set(lat, lon float64, restaurants []Restaurant) {
 	}
 }
 
-func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider string) (*RestaurantBot, error) {
+func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider string, database *db.DB) (*RestaurantBot, error) {
 	var bot *tgbotapi.BotAPI
 	var err error
 
@@ -212,6 +214,7 @@ func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider
 		mapsClient:  mapsClient,
 		cache:       NewLocationCache(),
 		apiProvider: apiProvider,
+		database:    database,
 	}, nil
 }
 
@@ -260,8 +263,31 @@ func (rb *RestaurantBot) Start() error {
 func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 	location := msg.Location
+	ctx := context.Background()
 
 	log.Printf("Received location from user %d: lat=%.6f, lon=%.6f", chatID, location.Latitude, location.Longitude)
+
+	// Track user in database if available
+	var dbUserID *int64
+	if rb.database != nil {
+		user, err := rb.database.UpsertUser(ctx, chatID,
+			msg.From.UserName,
+			msg.From.FirstName,
+			msg.From.LastName,
+			msg.From.LanguageCode,
+		)
+		if err != nil {
+			log.Printf("Failed to upsert user: %v", err)
+		} else {
+			dbUserID = &user.ID
+		}
+
+		// Record analytics event
+		rb.database.RecordAnalyticsEvent(ctx, "location_shared", dbUserID, map[string]interface{}{
+			"latitude":  location.Latitude,
+			"longitude": location.Longitude,
+		})
+	}
 
 	// Check cache first
 	if cached, found := rb.cache.Get(location.Latitude, location.Longitude); found {
@@ -288,6 +314,17 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 
 	// Cache the results
 	rb.cache.Set(location.Latitude, location.Longitude, restaurants)
+
+	// Record search history in database
+	if rb.database != nil && dbUserID != nil {
+		err := rb.database.RecordSearchHistory(ctx, *dbUserID,
+			location.Latitude, location.Longitude,
+			string(CategoryAll), len(restaurants), rb.apiProvider,
+		)
+		if err != nil {
+			log.Printf("Failed to record search history: %v", err)
+		}
+	}
 
 	// Send results
 	rb.sendRestaurantsFromCache(chatID, restaurants, location.Latitude, location.Longitude)
@@ -913,8 +950,50 @@ func main() {
 	googleMapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	apiProvider := os.Getenv("API_PROVIDER") // "google", "osm", or "both", defaults to "google"
 
+	// Initialize database (optional)
+	var database *db.DB
+	dbConfig, err := db.LoadConfig()
+	if err != nil {
+		log.Printf("Warning: Failed to load database config: %v", err)
+	} else if dbConfig.IsConfigured() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		database, err = db.Connect(ctx, dbConfig)
+		if err != nil {
+			log.Printf("Warning: Failed to connect to database: %v", err)
+			log.Printf("Continuing without database support...")
+		} else {
+			// Run migrations
+			if err := database.RunMigrations(ctx); err != nil {
+				log.Printf("Warning: Failed to run migrations: %v", err)
+			}
+
+			// Start background cache cleanup
+			go func() {
+				ticker := time.NewTicker(30 * time.Minute)
+				defer ticker.Stop()
+				for range ticker.C {
+					ctx := context.Background()
+					deleted, err := database.CleanupExpiredCache(ctx)
+					if err != nil {
+						log.Printf("Cache cleanup error: %v", err)
+					} else if deleted > 0 {
+						log.Printf("Cleaned up %d expired cache entries", deleted)
+					}
+				}
+			}()
+		}
+	} else {
+		log.Printf("Database not configured, running without database support")
+	}
+
+	// Ensure database is closed on shutdown
+	if database != nil {
+		defer database.Close()
+	}
+
 	var bot *RestaurantBot
-	var err error
 
 	if telegramEnabled {
 		telegramToken := os.Getenv("TELEGRAM_BOT_TOKEN")
@@ -923,7 +1002,7 @@ func main() {
 		}
 
 		// Create bot
-		bot, err = NewRestaurantBot(telegramToken, googleMapsAPIKey, apiProvider)
+		bot, err = NewRestaurantBot(telegramToken, googleMapsAPIKey, apiProvider, database)
 		if err != nil {
 			log.Fatalf("Failed to create bot: %v", err)
 		}
@@ -943,7 +1022,7 @@ func main() {
 	} else {
 		log.Printf("Telegram bot is disabled (set ENABLE_TELEGRAM_BOT=true to enable)")
 		// Create a minimal bot instance just for the HTTP server functionality
-		bot, err = NewRestaurantBot("", googleMapsAPIKey, apiProvider)
+		bot, err = NewRestaurantBot("", googleMapsAPIKey, apiProvider, database)
 		if err != nil {
 			log.Fatalf("Failed to create bot instance: %v", err)
 		}
@@ -1066,6 +1145,81 @@ func main() {
 			if err != nil {
 				log.Printf("Error streaming photo: %v", err)
 			}
+		})
+
+		// Health check endpoint
+		http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+
+			health := map[string]interface{}{
+				"status":       "healthy",
+				"api_provider": bot.apiProvider,
+				"timestamp":    time.Now().UTC().Format(time.RFC3339),
+			}
+
+			// Check database connection if available
+			if database != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := database.Ping(ctx); err != nil {
+					health["database"] = map[string]interface{}{
+						"status": "unhealthy",
+						"error":  err.Error(),
+					}
+				} else {
+					health["database"] = map[string]interface{}{
+						"status": "healthy",
+						"schema": database.SchemaName(),
+					}
+				}
+			} else {
+				health["database"] = map[string]interface{}{
+					"status": "not_configured",
+				}
+			}
+
+			json.NewEncoder(w).Encode(health)
+		})
+
+		// Stats endpoint (requires database)
+		http.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+
+			if database == nil {
+				http.Error(w, "Database not configured", http.StatusServiceUnavailable)
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			stats := make(map[string]interface{})
+
+			// Get total users
+			totalUsers, err := database.GetTotalUsers(ctx)
+			if err == nil {
+				stats["total_users"] = totalUsers
+			}
+
+			// Get total searches
+			totalSearches, err := database.GetTotalSearches(ctx)
+			if err == nil {
+				stats["total_searches"] = totalSearches
+			}
+
+			// Get analytics for last 24 hours
+			analyticsStats, err := database.GetAnalyticsStats(ctx, time.Now().Add(-24*time.Hour))
+			if err == nil {
+				stats["analytics_24h"] = analyticsStats
+			}
+
+			// Get schema version
+			version, err := database.GetSchemaVersion(ctx)
+			if err == nil {
+				stats["schema_version"] = version
+			}
+
+			json.NewEncoder(w).Encode(stats)
 		})
 
 		// Serve index-new.html at hard-to-find URL
