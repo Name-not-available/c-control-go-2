@@ -73,6 +73,34 @@ var allFoodCategories = []FoodCategory{
 	CategoryDelivery,
 }
 
+// cuisineSpecificTypes are Google's newer cuisine-specific place types
+// These are searched in addition to generic "restaurant" type for comprehensive results
+var cuisineSpecificTypes = []string{
+	"indian_restaurant",
+	"chinese_restaurant",
+	"thai_restaurant",
+	"japanese_restaurant",
+	"korean_restaurant",
+	"vietnamese_restaurant",
+	"italian_restaurant",
+	"mexican_restaurant",
+	"french_restaurant",
+	"greek_restaurant",
+	"mediterranean_restaurant",
+	"american_restaurant",
+	"seafood_restaurant",
+	"steak_house",
+	"barbecue_restaurant",
+	"pizza_restaurant",
+	"hamburger_restaurant",
+	"sushi_restaurant",
+	"ramen_restaurant",
+	"vegetarian_restaurant",
+	"vegan_restaurant",
+	"breakfast_restaurant",
+	"brunch_restaurant",
+}
+
 // Cuisine keywords for more specific searches
 // These are used with Google's Keyword parameter
 var cuisineKeywords = map[string]string{
@@ -111,7 +139,9 @@ var cuisineKeywords = map[string]string{
 }
 
 // validFoodTypes is a whitelist for last-resort post-filtering
+// Includes both generic types and Google's cuisine-specific restaurant types
 var validFoodTypes = map[string]bool{
+	// Generic food establishment types
 	"restaurant":      true,
 	"cafe":            true,
 	"bar":             true,
@@ -125,6 +155,55 @@ var validFoodTypes = map[string]bool{
 	"biergarten":      true,
 	"food_court":      true,
 	"ice_cream":       true,
+	
+	// Google's cuisine-specific restaurant types (added 2023+)
+	"indian_restaurant":         true,
+	"chinese_restaurant":        true,
+	"thai_restaurant":           true,
+	"japanese_restaurant":       true,
+	"korean_restaurant":         true,
+	"vietnamese_restaurant":     true,
+	"italian_restaurant":        true,
+	"mexican_restaurant":        true,
+	"french_restaurant":         true,
+	"greek_restaurant":          true,
+	"mediterranean_restaurant":  true,
+	"american_restaurant":       true,
+	"brazilian_restaurant":      true,
+	"spanish_restaurant":        true,
+	"middle_eastern_restaurant": true,
+	"turkish_restaurant":        true,
+	"lebanese_restaurant":       true,
+	"indonesian_restaurant":     true,
+	"asian_restaurant":          true,
+	"african_restaurant":        true,
+	"seafood_restaurant":        true,
+	"steak_house":               true,
+	"barbecue_restaurant":       true,
+	"pizza_restaurant":          true,
+	"hamburger_restaurant":      true,
+	"sandwich_shop":             true,
+	"ramen_restaurant":          true,
+	"sushi_restaurant":          true,
+	"vegetarian_restaurant":     true,
+	"vegan_restaurant":          true,
+	"brunch_restaurant":         true,
+	"breakfast_restaurant":      true,
+	"buffet_restaurant":         true,
+	"fine_dining_restaurant":    true,
+	"fast_food_restaurant":      true,
+	"coffee_shop":               true,
+	"tea_house":                 true,
+	"juice_shop":                true,
+	"ice_cream_shop":            true,
+	"dessert_shop":              true,
+	"donut_shop":                true,
+	"candy_store":               true,
+	"wine_bar":                  true,
+	"cocktail_bar":              true,
+	"sports_bar":                true,
+	"beer_hall":                 true,
+	"beer_garden":               true,
 }
 
 type RestaurantBot struct {
@@ -571,29 +650,75 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 	type result struct {
 		restaurants []Restaurant
 		err         error
-		category    FoodCategory
+		source      string
 	}
 
-	resultsChan := make(chan result, len(categories))
+	// Check if we're searching for restaurants (include cuisine-specific types and text search)
+	includesCuisineTypes := false
+	for _, cat := range categories {
+		if cat == CategoryRestaurant {
+			includesCuisineTypes = true
+			break
+		}
+	}
+
+	// Calculate total searches: categories + cuisine-specific types + text searches (if applicable)
+	totalSearches := len(categories)
+	textSearchQueries := []string{} // Text Search queries to run
+	if includesCuisineTypes {
+		totalSearches += len(cuisineSpecificTypes)
+		// Add Text Search queries for comprehensive coverage
+		if keyword != "" {
+			textSearchQueries = append(textSearchQueries, keyword+" restaurant")
+		} else {
+			textSearchQueries = append(textSearchQueries, "restaurant", "food")
+		}
+		totalSearches += len(textSearchQueries)
+	}
+
+	resultsChan := make(chan result, totalSearches)
 
 	// Search all categories in parallel
 	for _, cat := range categories {
 		go func(c FoodCategory) {
 			placeType := categoryToGoogleType[c]
 			restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType, keyword)
-			resultsChan <- result{restaurants: restaurants, err: err, category: c}
+			resultsChan <- result{restaurants: restaurants, err: err, source: string(c)}
 		}(cat)
 	}
 
-	// Collect results from all categories
+	// Also search cuisine-specific types to catch restaurants typed with specific cuisines
+	if includesCuisineTypes {
+		for _, cuisineType := range cuisineSpecificTypes {
+			go func(ct string) {
+				restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, maps.PlaceType(ct), keyword)
+				resultsChan <- result{restaurants: restaurants, err: err, source: ct}
+			}(cuisineType)
+		}
+
+		// Also run Text Search for comprehensive coverage
+		for _, query := range textSearchQueries {
+			go func(q string) {
+				restaurants, err := rb.findNearbyRestaurantsGoogleTextSearch(lat, lon, q)
+				resultsChan <- result{restaurants: restaurants, err: err, source: "text:" + q}
+			}(query)
+		}
+	}
+
+	// Collect results from all searches
 	var allRestaurants []Restaurant
 	var errors []string
 
-	for i := 0; i < len(categories); i++ {
+	for i := 0; i < totalSearches; i++ {
 		res := <-resultsChan
 		if res.err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", res.category, res.err))
-			log.Printf("Error searching %s: %v", res.category, res.err)
+			// Only log errors for main categories, not cuisine-specific or text search
+			if !strings.Contains(res.source, "_restaurant") && 
+			   !strings.Contains(res.source, "_house") && 
+			   !strings.HasPrefix(res.source, "text:") {
+				errors = append(errors, fmt.Sprintf("%s: %v", res.source, res.err))
+				log.Printf("Error searching %s: %v", res.source, res.err)
+			}
 		} else {
 			allRestaurants = append(allRestaurants, res.restaurants...)
 		}
@@ -611,6 +736,85 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 	sortRestaurantsByRating(deduplicated)
 
 	return deduplicated, nil
+}
+
+// findNearbyRestaurantsGoogleTextSearch uses Text Search API for more comprehensive results
+// Text Search can find restaurants that NearbySearch might miss
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64, query string) ([]Restaurant, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	request := &maps.TextSearchRequest{
+		Query: query,
+		Location: &maps.LatLng{
+			Lat: lat,
+			Lng: lon,
+		},
+		Radius:   2000, // 2km radius
+		Language: "en",
+	}
+
+	allRestaurants := make([]Restaurant, 0)
+	var nextPageToken string
+
+	for page := 0; page < 3; page++ { // Maximum 3 pages (60 results)
+		if page > 0 {
+			request.PageToken = nextPageToken
+			time.Sleep(2 * time.Second)
+		}
+
+		resp, err := rb.mapsClient.TextSearch(ctx, request)
+		if err != nil {
+			if page == 0 {
+				return nil, fmt.Errorf("text search failed: %w", err)
+			}
+			break
+		}
+
+		for _, place := range resp.Results {
+			if !isFoodRelatedPlace(place.Types) {
+				continue
+			}
+
+			distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+			
+			// Skip if too far (Text Search can return results outside radius)
+			if distance > 2.5 { // 2.5km max
+				continue
+			}
+
+			photoRef := ""
+			if len(place.Photos) > 0 {
+				photoRef = place.Photos[0].PhotoReference
+			}
+
+			reviewCount := 0
+			if place.UserRatingsTotal > 0 {
+				reviewCount = place.UserRatingsTotal
+			}
+
+			allRestaurants = append(allRestaurants, Restaurant{
+				Name:           place.Name,
+				Rating:         float64(place.Rating),
+				ReviewCount:    reviewCount,
+				PriceLevel:     place.PriceLevel,
+				Type:           formatPlaceType(place.Types),
+				Latitude:       place.Geometry.Location.Lat,
+				Longitude:      place.Geometry.Location.Lng,
+				Address:        place.FormattedAddress,
+				Distance:       distance,
+				PhotoReference: photoRef,
+				PlaceID:        place.PlaceID,
+			})
+		}
+
+		if resp.NextPageToken == "" {
+			break
+		}
+		nextPageToken = resp.NextPageToken
+	}
+
+	return allRestaurants, nil
 }
 
 // findNearbyRestaurantsGoogleByType searches for a specific place type with optional keyword
@@ -712,7 +916,20 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 // isFoodRelatedPlace checks if place has at least one food-related type (last-resort filter)
 func isFoodRelatedPlace(types []string) bool {
 	for _, t := range types {
+		// Check exact match in whitelist
 		if validFoodTypes[t] {
+			return true
+		}
+		// Also match any type containing "restaurant", "food", "cafe", "bar", "bakery"
+		// This catches new Google types we haven't added to the whitelist yet
+		tLower := strings.ToLower(t)
+		if strings.Contains(tLower, "restaurant") ||
+			strings.Contains(tLower, "food") ||
+			strings.Contains(tLower, "cafe") ||
+			strings.Contains(tLower, "bar") ||
+			strings.Contains(tLower, "bakery") ||
+			strings.Contains(tLower, "dining") ||
+			strings.Contains(tLower, "eatery") {
 			return true
 		}
 	}
