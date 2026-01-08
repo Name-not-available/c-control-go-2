@@ -26,6 +26,67 @@ const (
 	cacheGridSize            = 0.01          // ~1km grid for caching (0.01 degrees)
 )
 
+// FoodCategory represents a category of food establishments
+type FoodCategory string
+
+const (
+	CategoryAll       FoodCategory = "all"
+	CategoryRestaurant FoodCategory = "restaurant"
+	CategoryCafe      FoodCategory = "cafe"
+	CategoryBar       FoodCategory = "bar"
+	CategoryTakeaway  FoodCategory = "takeaway"
+	CategoryBakery    FoodCategory = "bakery"
+	CategoryDelivery  FoodCategory = "delivery"
+)
+
+// categoryToGoogleType maps categories to Google Places types
+var categoryToGoogleType = map[FoodCategory]maps.PlaceType{
+	CategoryRestaurant: maps.PlaceTypeRestaurant,
+	CategoryCafe:       maps.PlaceTypeCafe,
+	CategoryBar:        maps.PlaceTypeBar,
+	CategoryTakeaway:   maps.PlaceTypeMealTakeaway,
+	CategoryBakery:     maps.PlaceTypeBakery,
+	CategoryDelivery:   maps.PlaceTypeMealDelivery,
+}
+
+// categoryToOSMAmenities maps categories to OSM amenity values
+var categoryToOSMAmenities = map[FoodCategory][]string{
+	CategoryAll:        {"restaurant", "fast_food", "cafe", "bar", "pub", "biergarten", "food_court", "ice_cream", "bakery"},
+	CategoryRestaurant: {"restaurant"},
+	CategoryCafe:       {"cafe"},
+	CategoryBar:        {"bar", "pub", "biergarten"},
+	CategoryTakeaway:   {"fast_food"},
+	CategoryBakery:     {"bakery"},
+	CategoryDelivery:   {"restaurant", "fast_food"}, // OSM doesn't have specific delivery tag
+}
+
+// allFoodCategories lists all categories to search for "all" option
+var allFoodCategories = []FoodCategory{
+	CategoryRestaurant,
+	CategoryCafe,
+	CategoryBar,
+	CategoryTakeaway,
+	CategoryBakery,
+	CategoryDelivery,
+}
+
+// validFoodTypes is a whitelist for last-resort post-filtering
+var validFoodTypes = map[string]bool{
+	"restaurant":      true,
+	"cafe":            true,
+	"bar":             true,
+	"bakery":          true,
+	"meal_delivery":   true,
+	"meal_takeaway":   true,
+	"night_club":      true,
+	"food":            true,
+	"fast_food":       true,
+	"pub":             true,
+	"biergarten":      true,
+	"food_court":      true,
+	"ice_cream":       true,
+}
+
 type RestaurantBot struct {
 	telegramBot *tgbotapi.BotAPI
 	mapsClient  *maps.Client
@@ -212,8 +273,8 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	// Send "searching" message
 	rb.sendTextMessage(chatID, "🔍 Searching for nearby restaurants...")
 
-	// Find nearby restaurants
-	restaurants, err := rb.findNearbyRestaurants(location.Latitude, location.Longitude)
+	// Find nearby restaurants (default to all categories for Telegram)
+	restaurants, err := rb.findNearbyRestaurants(location.Latitude, location.Longitude, CategoryAll)
 	if err != nil {
 		log.Printf("Error finding restaurants: %v", err)
 		rb.sendTextMessage(chatID, "❌ Sorry, I couldn't find restaurants at the moment. Please try again later.")
@@ -232,21 +293,26 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	rb.sendRestaurantsFromCache(chatID, restaurants, location.Latitude, location.Longitude)
 }
 
-func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
+	// Default to "all" if empty
+	if category == "" {
+		category = CategoryAll
+	}
+
 	switch rb.apiProvider {
 	case "osm":
-		return rb.findNearbyRestaurantsOSM(lat, lon)
+		return rb.findNearbyRestaurantsOSM(lat, lon, category)
 	case "both":
-		return rb.findNearbyRestaurantsBoth(lat, lon)
+		return rb.findNearbyRestaurantsBoth(lat, lon, category)
 	case "google":
 		fallthrough
 	default:
-		return rb.findNearbyRestaurantsGoogle(lat, lon)
+		return rb.findNearbyRestaurantsGoogle(lat, lon, category)
 	}
 }
 
 // findNearbyRestaurantsBoth searches both providers in parallel and combines results
-func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
 	type result struct {
 		restaurants []Restaurant
 		err         error
@@ -261,13 +327,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64) ([]Restaura
 			resultsChan <- result{restaurants: []Restaurant{}, err: nil, source: "google"}
 			return
 		}
-		restaurants, err := rb.findNearbyRestaurantsGoogle(lat, lon)
+		restaurants, err := rb.findNearbyRestaurantsGoogle(lat, lon, category)
 		resultsChan <- result{restaurants: restaurants, err: err, source: "google"}
 	}()
 
 	// Search OpenStreetMap in parallel
 	go func() {
-		restaurants, err := rb.findNearbyRestaurantsOSM(lat, lon)
+		restaurants, err := rb.findNearbyRestaurantsOSM(lat, lon, category)
 		resultsChan <- result{restaurants: restaurants, err: err, source: "osm"}
 	}()
 
@@ -363,8 +429,71 @@ func sortRestaurantsByRating(restaurants []Restaurant) {
 	}
 }
 
-func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restaurant, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
+	// For "all" category, search all food types in parallel
+	if category == CategoryAll {
+		return rb.findNearbyRestaurantsGoogleAll(lat, lon)
+	}
+
+	// Single category search
+	placeType, ok := categoryToGoogleType[category]
+	if !ok {
+		placeType = maps.PlaceTypeRestaurant // fallback
+	}
+
+	return rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType)
+}
+
+// findNearbyRestaurantsGoogleAll searches all food categories in parallel
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleAll(lat, lon float64) ([]Restaurant, error) {
+	type result struct {
+		restaurants []Restaurant
+		err         error
+		category    FoodCategory
+	}
+
+	resultsChan := make(chan result, len(allFoodCategories))
+
+	// Search all categories in parallel
+	for _, cat := range allFoodCategories {
+		go func(c FoodCategory) {
+			placeType := categoryToGoogleType[c]
+			restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType)
+			resultsChan <- result{restaurants: restaurants, err: err, category: c}
+		}(cat)
+	}
+
+	// Collect results from all categories
+	var allRestaurants []Restaurant
+	var errors []string
+
+	for i := 0; i < len(allFoodCategories); i++ {
+		res := <-resultsChan
+		if res.err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", res.category, res.err))
+			log.Printf("Error searching %s: %v", res.category, res.err)
+		} else {
+			allRestaurants = append(allRestaurants, res.restaurants...)
+		}
+	}
+
+	// If all failed, return error
+	if len(allRestaurants) == 0 && len(errors) > 0 {
+		return nil, fmt.Errorf("all category searches failed: %s", strings.Join(errors, "; "))
+	}
+
+	// Deduplicate restaurants (same place might appear in multiple categories)
+	deduplicated := deduplicateRestaurants(allRestaurants)
+
+	// Sort by rating (highest first), then by distance for same ratings
+	sortRestaurantsByRating(deduplicated)
+
+	return deduplicated, nil
+}
+
+// findNearbyRestaurantsGoogleByType searches for a specific place type
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, placeType maps.PlaceType) ([]Restaurant, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Longer timeout for pagination
 	defer cancel()
 
 	request := &maps.NearbySearchRequest{
@@ -373,7 +502,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 			Lng: lon,
 		},
 		Radius:   2000, // 2km radius
-		Type:     maps.PlaceTypeRestaurant,
+		Type:     placeType,
 		Language: "en",
 	}
 
@@ -405,6 +534,12 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 
 		// Convert to unified Restaurant format
 		for _, place := range resp.Results {
+			// Last-resort post-filter: skip if no food-related types at all
+			if !isFoodRelatedPlace(place.Types) {
+				log.Printf("Filtered out non-food place: %s (types: %v)", place.Name, place.Types)
+				continue
+			}
+
 			distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
 
 			// Extract photo reference if available
@@ -420,14 +555,14 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 			}
 
 			priceLevel := place.PriceLevel
-			placeType := formatPlaceType(place.Types)
+			placeTypeStr := formatPlaceType(place.Types)
 
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
 				Rating:         float64(place.Rating),
 				ReviewCount:    reviewCount,
 				PriceLevel:     priceLevel,
-				Type:           placeType,
+				Type:           placeTypeStr,
 				Latitude:       place.Geometry.Location.Lat,
 				Longitude:      place.Geometry.Location.Lng,
 				Address:        place.Vicinity,
@@ -451,25 +586,44 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64) ([]Restau
 	return allRestaurants, nil
 }
 
-func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64) ([]Restaurant, error) {
+// isFoodRelatedPlace checks if place has at least one food-related type (last-resort filter)
+func isFoodRelatedPlace(types []string) bool {
+	for _, t := range types {
+		if validFoodTypes[t] {
+			return true
+		}
+	}
+	// If no types provided, assume it's valid (don't filter)
+	return len(types) == 0
+}
+
+func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	// Overpass API query to find restaurants within 2km
-	// Using Overpass Turbo API (free, no API key needed)
+	// Get amenities for this category
+	amenities, ok := categoryToOSMAmenities[category]
+	if !ok {
+		amenities = categoryToOSMAmenities[CategoryAll]
+	}
+
+	// Build Overpass API query dynamically based on category
 	radius := 2000 // meters
+	var queryParts []string
+	for _, amenity := range amenities {
+		queryParts = append(queryParts,
+			fmt.Sprintf(`node["amenity"="%s"](around:%d,%.6f,%.6f);`, amenity, radius, lat, lon),
+			fmt.Sprintf(`way["amenity"="%s"](around:%d,%.6f,%.6f);`, amenity, radius, lat, lon),
+		)
+	}
+
 	query := fmt.Sprintf(`
 		[out:json][timeout:10];
 		(
-		  node["amenity"="restaurant"](around:%d,%.6f,%.6f);
-		  node["amenity"="fast_food"](around:%d,%.6f,%.6f);
-		  node["amenity"="cafe"](around:%d,%.6f,%.6f);
-		  way["amenity"="restaurant"](around:%d,%.6f,%.6f);
-		  way["amenity"="fast_food"](around:%d,%.6f,%.6f);
-		  way["amenity"="cafe"](around:%d,%.6f,%.6f);
+		  %s
 		);
 		out center meta;
-	`, radius, lat, lon, radius, lat, lon, radius, lat, lon, radius, lat, lon, radius, lat, lon, radius, lat, lon)
+	`, strings.Join(queryParts, "\n		  "))
 
 	// Use Overpass API endpoint
 	apiURL := "https://overpass-api.de/api/interpreter"
@@ -814,13 +968,15 @@ func main() {
 				return
 			}
 
-			// Get lat/lon from query params or JSON body
+			// Get lat/lon/category from query params or JSON body
 			var lat, lon float64
+			var category FoodCategory
 			var err error
 
 			if r.Method == "GET" {
 				latStr := r.URL.Query().Get("lat")
 				lonStr := r.URL.Query().Get("lon")
+				categoryStr := r.URL.Query().Get("category")
 				if latStr == "" || lonStr == "" {
 					http.Error(w, "lat and lon parameters are required", http.StatusBadRequest)
 					return
@@ -835,10 +991,12 @@ func main() {
 					http.Error(w, "Invalid lon parameter", http.StatusBadRequest)
 					return
 				}
+				category = FoodCategory(categoryStr)
 			} else {
 				var req struct {
-					Lat float64 `json:"lat"`
-					Lon float64 `json:"lon"`
+					Lat      float64 `json:"lat"`
+					Lon      float64 `json:"lon"`
+					Category string  `json:"category"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					http.Error(w, "Invalid JSON body", http.StatusBadRequest)
@@ -846,25 +1004,20 @@ func main() {
 				}
 				lat = req.Lat
 				lon = req.Lon
+				category = FoodCategory(req.Category)
 			}
 
-			// Check cache first
-			var restaurants []Restaurant
-			if cached, found := bot.cache.Get(lat, lon); found {
-				log.Printf("Cache hit for location %.6f,%.6f", lat, lon)
-				restaurants = cached
-			} else {
-				// Find restaurants
-				restaurants, err = bot.findNearbyRestaurants(lat, lon)
-				if err != nil {
-					log.Printf("Error finding restaurants: %v", err)
-					http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
-					return
-				}
-				// Cache the results
-				if len(restaurants) > 0 {
-					bot.cache.Set(lat, lon, restaurants)
-				}
+			// Default to "all" if category not specified
+			if category == "" {
+				category = CategoryAll
+			}
+
+			// Find restaurants (no caching by category to keep it simple, or implement category-aware cache)
+			restaurants, err := bot.findNearbyRestaurants(lat, lon, category)
+			if err != nil {
+				log.Printf("Error finding restaurants: %v", err)
+				http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
+				return
 			}
 
 			w.Header().Set("Content-Type", "application/json")
