@@ -1,4 +1,4 @@
-const CACHE_NAME = 'restaurant-finder-cache-v2';
+const CACHE_NAME = 'restaurant-finder-cache-v3';
 const STATIC_URLS = [
   '/vwrk4DFEv1RQpl3PxmWSZUeCkSVjAc5kbDqnIIu4DqDYVdNnGiu1xBWIE8IgbJ3X.html',
   '/manifest.json'

@@ -273,8 +273,8 @@
                 <input type="number" id="longitude" placeholder="Longitude (e.g., -74.0060)" step="any">
             </div>
             <div class="button-group">
-                <button class="btn-primary" onclick="searchRestaurants()">🔍 Search Restaurants</button>
-                <button class="btn-secondary" onclick="getCurrentLocation()">📍 Use My Location</button>
+                <button id="search-btn" class="btn-primary" onclick="searchRestaurants()">🔍 Search Restaurants</button>
+                <button id="location-btn" class="btn-secondary" onclick="getCurrentLocation()">📍 Use My Location</button>
             </div>
         </div>
 
@@ -292,6 +292,11 @@
     </div>
 
     <script>
+        // Track request states to prevent multiple concurrent requests
+        let isLocationRequestInProgress = false;
+        let isSearchInProgress = false;
+        let locationPermissionStatus = null; // 'granted', 'denied', 'prompt', or null
+
         function showError(message) {
             const errorDiv = document.getElementById('error');
             errorDiv.textContent = message;
@@ -303,28 +308,143 @@
 
         function showLoading(show) {
             document.getElementById('loading').classList.toggle('active', show);
+            // Disable/enable buttons during loading
+            const locationBtn = document.getElementById('location-btn');
+            const searchBtn = document.getElementById('search-btn');
+            
+            [locationBtn, searchBtn].forEach(btn => {
+                if (btn) {
+                    btn.disabled = show;
+                    btn.style.opacity = show ? '0.6' : '1';
+                    btn.style.cursor = show ? 'not-allowed' : 'pointer';
+                }
+            });
         }
 
-        function getCurrentLocation() {
+        // Check and update permission status
+        async function checkLocationPermission() {
+            if (!navigator.permissions) {
+                // Permissions API not supported, return unknown
+                return null;
+            }
+            try {
+                const result = await navigator.permissions.query({ name: 'geolocation' });
+                locationPermissionStatus = result.state;
+                
+                // Listen for permission changes
+                result.onchange = () => {
+                    locationPermissionStatus = result.state;
+                    updateLocationButtonState();
+                };
+                
+                return result.state;
+            } catch (e) {
+                console.warn('Permission query failed:', e);
+                return null;
+            }
+        }
+
+        // Update button appearance based on permission state
+        function updateLocationButtonState() {
+            const locationBtn = document.getElementById('location-btn');
+            if (!locationBtn) return;
+            
+            if (locationPermissionStatus === 'granted') {
+                locationBtn.textContent = '📍 Use My Location';
+                locationBtn.title = 'Location access granted - click to get your position';
+            } else if (locationPermissionStatus === 'denied') {
+                locationBtn.textContent = '🚫 Location Blocked';
+                locationBtn.title = 'Location access denied - please enable it in browser settings';
+            } else {
+                locationBtn.textContent = '📍 Use My Location';
+                locationBtn.title = 'Click to request location access';
+            }
+        }
+
+        // Get specific error message based on error code
+        function getLocationErrorMessage(error) {
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    return '🚫 Location access denied. Please enable location permissions in your browser settings and try again.';
+                case error.POSITION_UNAVAILABLE:
+                    return '📡 Location unavailable. Your device could not determine your position. Please try again or enter coordinates manually.';
+                case error.TIMEOUT:
+                    return '⏱️ Location request timed out. Please check your GPS/location settings and try again.';
+                default:
+                    return '❌ Unable to get your location: ' + error.message;
+            }
+        }
+
+        async function getCurrentLocation() {
+            // Check if geolocation is supported
             if (!navigator.geolocation) {
-                showError('Geolocation is not supported by your browser');
+                showError('Geolocation is not supported by your browser. Please enter coordinates manually.');
                 return;
             }
 
+            // Prevent multiple concurrent requests (debouncing)
+            if (isLocationRequestInProgress) {
+                console.log('Location request already in progress, ignoring duplicate request');
+                return;
+            }
+
+            // Check permission status first
+            const permissionState = await checkLocationPermission();
+            
+            // If permission was explicitly denied, show helpful message
+            if (permissionState === 'denied') {
+                showError('🚫 Location access is blocked. To enable it:\n• Click the lock/info icon in your browser\'s address bar\n• Find "Location" and set it to "Allow"\n• Then refresh the page and try again');
+                return;
+            }
+
+            // Set request in progress flag
+            isLocationRequestInProgress = true;
             showLoading(true);
+
+            // Geolocation options for better reliability
+            const options = {
+                enableHighAccuracy: true,  // Request high accuracy (GPS)
+                timeout: 15000,            // 15 second timeout
+                maximumAge: 60000          // Accept cached position up to 1 minute old
+            };
+
             navigator.geolocation.getCurrentPosition(
                 (position) => {
+                    // Success callback
+                    isLocationRequestInProgress = false;
                     document.getElementById('latitude').value = position.coords.latitude;
                     document.getElementById('longitude').value = position.coords.longitude;
                     showLoading(false);
+                    
+                    // Update permission status
+                    locationPermissionStatus = 'granted';
+                    updateLocationButtonState();
+                    
+                    // Automatically search
                     searchRestaurants();
                 },
                 (error) => {
+                    // Error callback
+                    isLocationRequestInProgress = false;
                     showLoading(false);
-                    showError('Unable to get your location: ' + error.message);
-                }
+                    
+                    // Update permission status if denied
+                    if (error.code === error.PERMISSION_DENIED) {
+                        locationPermissionStatus = 'denied';
+                        updateLocationButtonState();
+                    }
+                    
+                    showError(getLocationErrorMessage(error));
+                },
+                options
             );
         }
+
+        // Initialize permission check on page load
+        document.addEventListener('DOMContentLoaded', async () => {
+            await checkLocationPermission();
+            updateLocationButtonState();
+        });
 
         function formatDistance(distanceKm) {
             if (distanceKm < 1.0) {
@@ -334,6 +454,12 @@
         }
 
         function searchRestaurants() {
+            // Prevent multiple concurrent search requests
+            if (isSearchInProgress) {
+                console.log('Search already in progress, ignoring duplicate request');
+                return;
+            }
+
             const lat = parseFloat(document.getElementById('latitude').value);
             const lon = parseFloat(document.getElementById('longitude').value);
 
@@ -342,6 +468,7 @@
                 return;
             }
 
+            isSearchInProgress = true;
             showLoading(true);
             document.getElementById('restaurants-list').innerHTML = '';
             document.getElementById('no-results').classList.remove('active');
@@ -356,6 +483,7 @@
                     return response.json();
                 })
                 .then(restaurants => {
+                    isSearchInProgress = false;
                     showLoading(false);
                     if (restaurants.length === 0) {
                         document.getElementById('no-results').classList.add('active');
@@ -404,6 +532,7 @@
                     });
                 })
                 .catch(error => {
+                    isSearchInProgress = false;
                     showLoading(false);
                     showError('Error: ' + error.message);
                     console.error('Error:', error);
