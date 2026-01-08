@@ -188,6 +188,29 @@
                     <p class="text-sm text-gray-600">Searching for restaurants...</p>
                 </div>
             </div>
+            
+            <!-- Stats Section -->
+            <div id="stats-section" class="hidden mt-4">
+                <h3 class="text-sm font-semibold text-gray-700 mb-2">📊 Search Statistics</h3>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div class="bg-gradient-to-br from-purple-500 to-purple-700 text-white p-3 rounded-lg text-center">
+                        <div class="text-2xl font-bold" id="stat-google-pages">0</div>
+                        <div class="text-xs opacity-90">Google API Pages</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-pink-500 to-red-500 text-white p-3 rounded-lg text-center">
+                        <div class="text-2xl font-bold" id="stat-google-results">0</div>
+                        <div class="text-xs opacity-90">Google Results</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-blue-400 to-cyan-400 text-white p-3 rounded-lg text-center">
+                        <div class="text-2xl font-bold" id="stat-osm-results">0</div>
+                        <div class="text-xs opacity-90">OSM Results</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-green-400 to-teal-400 text-white p-3 rounded-lg text-center">
+                        <div class="text-2xl font-bold" id="stat-total-results">0</div>
+                        <div class="text-xs opacity-90">Total Unique</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Content Area -->
@@ -658,6 +681,7 @@
             isSearchInProgress = true;
             showLoading(true);
             clearAllGrids();
+            document.getElementById('stats-section').classList.add('hidden');
 
             // Build query URL
             let url = `/api/restaurants?lat=${lat}&lon=${lon}&categories=${categories.join(',')}`;
@@ -674,9 +698,17 @@
                     }
                     return response.json();
                 })
-                .then(restaurants => {
+                .then(data => {
                     isSearchInProgress = false;
                     showLoading(false);
+                    
+                    // Handle new response format with stats
+                    const restaurants = data.restaurants || data;
+                    const stats = data.stats || {};
+                    
+                    // Update stats display
+                    updateStats(stats);
+                    
                     if (restaurants.length === 0) {
                         showError('No restaurants found. Try a different location.');
                         return;
@@ -690,6 +722,19 @@
                     showError('Error: ' + error.message);
                     console.error('Error:', error);
                 });
+        }
+        
+        function updateStats(stats) {
+            const statsSection = document.getElementById('stats-section');
+            if (stats && (stats.googleApiPages || stats.googleResults || stats.osmResults || stats.totalResults)) {
+                document.getElementById('stat-google-pages').textContent = stats.googleApiPages || 0;
+                document.getElementById('stat-google-results').textContent = stats.googleResults || 0;
+                document.getElementById('stat-osm-results').textContent = stats.osmResults || 0;
+                document.getElementById('stat-total-results').textContent = stats.totalResults || 0;
+                statsSection.classList.remove('hidden');
+            } else {
+                statsSection.classList.add('hidden');
+            }
         }
 
         // Allow Enter key to trigger search

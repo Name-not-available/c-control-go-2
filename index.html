@@ -433,6 +433,28 @@
 
         <div class="loading" id="loading">🔍 Searching for nearby restaurants...</div>
 
+        <div class="stats-section" id="stats-section" style="display: none; background: white; border-radius: 15px; padding: 20px; margin-bottom: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1);">
+            <h3 style="margin-bottom: 15px; color: #333; font-size: 1.2em;">📊 Search Statistics</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+                <div class="stat-item" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold;" id="stat-google-pages">0</div>
+                    <div style="font-size: 0.85em; opacity: 0.9;">Google API Pages</div>
+                </div>
+                <div class="stat-item" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold;" id="stat-google-results">0</div>
+                    <div style="font-size: 0.85em; opacity: 0.9;">Google Results</div>
+                </div>
+                <div class="stat-item" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold;" id="stat-osm-results">0</div>
+                    <div style="font-size: 0.85em; opacity: 0.9;">OSM Results</div>
+                </div>
+                <div class="stat-item" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 2em; font-weight: bold;" id="stat-total-results">0</div>
+                    <div style="font-size: 0.85em; opacity: 0.9;">Total Unique</div>
+                </div>
+            </div>
+        </div>
+
         <div class="no-results" id="no-results">
             <div class="emoji">😔</div>
             <h2>No restaurants found</h2>
@@ -704,6 +726,7 @@
             showLoading(true);
             document.getElementById('restaurants-list').innerHTML = '';
             document.getElementById('no-results').classList.remove('active');
+            document.getElementById('stats-section').style.display = 'none';
 
             // Build query URL
             let url = `/api/restaurants?lat=${lat}&lon=${lon}&categories=${categories.join(',')}`;
@@ -720,9 +743,17 @@
                     }
                     return response.json();
                 })
-                .then(restaurants => {
+                .then(data => {
                     isSearchInProgress = false;
                     showLoading(false);
+                    
+                    // Handle new response format with stats
+                    const restaurants = data.restaurants || data;
+                    const stats = data.stats || {};
+                    
+                    // Update stats display
+                    updateStats(stats);
+                    
                     if (restaurants.length === 0) {
                         document.getElementById('no-results').classList.add('active');
                         return;
@@ -776,6 +807,19 @@
                     showError('Error: ' + error.message);
                     console.error('Error:', error);
                 });
+        }
+        
+        function updateStats(stats) {
+            const statsSection = document.getElementById('stats-section');
+            if (stats && (stats.googleApiPages || stats.googleResults || stats.osmResults || stats.totalResults)) {
+                document.getElementById('stat-google-pages').textContent = stats.googleApiPages || 0;
+                document.getElementById('stat-google-results').textContent = stats.googleResults || 0;
+                document.getElementById('stat-osm-results').textContent = stats.osmResults || 0;
+                document.getElementById('stat-total-results').textContent = stats.totalResults || 0;
+                statsSection.style.display = 'block';
+            } else {
+                statsSection.style.display = 'none';
+            }
         }
 
         // Allow Enter key to trigger search
