@@ -65,7 +65,7 @@
 
         <!-- Search Section -->
         <div class="bg-white p-4 border-b border-gray-300">
-            <div class="flex flex-col md:flex-row gap-3">
+            <div class="flex flex-col md:flex-row gap-3 mb-3">
                 <input 
                     type="number" 
                     id="latitude" 
@@ -80,6 +80,20 @@
                     step="any"
                     class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
                 >
+            </div>
+            <div class="flex flex-col md:flex-row gap-3">
+                <select 
+                    id="category"
+                    class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none bg-white cursor-pointer"
+                >
+                    <option value="all">🍽️ All Food & Drink</option>
+                    <option value="restaurant">🍴 Restaurants Only</option>
+                    <option value="cafe">☕ Cafes & Coffee</option>
+                    <option value="bar">🍺 Bars & Pubs</option>
+                    <option value="takeaway">🍔 Fast Food / Takeaway</option>
+                    <option value="bakery">🥐 Bakeries</option>
+                    <option value="delivery">🚗 Meal Delivery</option>
+                </select>
                 <button 
                     onclick="searchRestaurants()" 
                     class="px-6 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors"
@@ -92,6 +106,9 @@
                 >
                     📍 My Location
                 </button>
+            </div>
+            <div id="share-link" class="hidden mt-3 p-2 bg-gray-100 rounded-lg text-sm break-all">
+                📎 Share: <a href="#" id="share-url" target="_blank" class="text-purple-600 hover:underline"></a>
             </div>
             <div id="error" class="hidden mt-3 bg-red-50 border-l-4 border-red-500 text-red-700 p-3 rounded"></div>
             <div id="loading" class="hidden mt-3 text-center">
@@ -164,6 +181,38 @@
                 return Math.round(distanceKm * 1000) + 'm';
             }
             return distanceKm.toFixed(2) + 'km';
+        }
+
+        function updateURL(lat, lon, category) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('lat', lat);
+            url.searchParams.set('lon', lon);
+            url.searchParams.set('category', category);
+            window.history.pushState({}, '', url);
+            
+            // Show share link
+            const shareLink = document.getElementById('share-link');
+            const shareUrl = document.getElementById('share-url');
+            shareUrl.href = url.toString();
+            shareUrl.textContent = url.toString();
+            shareLink.classList.remove('hidden');
+        }
+
+        function parseURLParams() {
+            const params = new URLSearchParams(window.location.search);
+            const lat = params.get('lat');
+            const lon = params.get('lon');
+            const category = params.get('category');
+            
+            if (lat && lon) {
+                document.getElementById('latitude').value = lat;
+                document.getElementById('longitude').value = lon;
+                if (category) {
+                    document.getElementById('category').value = category;
+                }
+                return true;
+            }
+            return false;
         }
 
         function getRestaurantImageUrl(restaurant) {
@@ -354,16 +403,20 @@
         function searchRestaurants() {
             const lat = parseFloat(document.getElementById('latitude').value);
             const lon = parseFloat(document.getElementById('longitude').value);
+            const category = document.getElementById('category').value;
 
             if (isNaN(lat) || isNaN(lon)) {
                 showError('Please enter valid latitude and longitude values');
                 return;
             }
 
+            // Update URL for sharing
+            updateURL(lat, lon, category);
+
             showLoading(true);
             clearAllGrids();
 
-            fetch(`/api/restaurants?lat=${lat}&lon=${lon}`)
+            fetch(`/api/restaurants?lat=${lat}&lon=${lon}&category=${category}`)
                 .then(response => {
                     if (!response.ok) {
                         return response.text().then(text => {
@@ -394,6 +447,13 @@
         });
         document.getElementById('longitude').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') searchRestaurants();
+        });
+
+        // Parse URL params on page load and auto-search if present
+        window.addEventListener('DOMContentLoaded', () => {
+            if (parseURLParams()) {
+                searchRestaurants();
+            }
         });
 
         if ('serviceWorker' in navigator) {

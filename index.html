@@ -54,16 +54,36 @@
             margin-bottom: 15px;
         }
 
-        .input-group input {
+        .input-group input, .input-group select {
             flex: 1;
             padding: 12px 15px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             font-size: 16px;
             transition: border-color 0.3s;
+            background: white;
         }
 
-        .input-group input:focus {
+        .input-group input:focus, .input-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .category-row {
+            margin-bottom: 15px;
+        }
+
+        .category-row select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+        }
+
+        .category-row select:focus {
             outline: none;
             border-color: #667eea;
         }
@@ -71,6 +91,24 @@
         .button-group {
             display: flex;
             gap: 10px;
+        }
+
+        .share-link {
+            display: none;
+            margin-top: 15px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            word-break: break-all;
+            font-size: 14px;
+        }
+
+        .share-link.active {
+            display: block;
+        }
+
+        .share-link a {
+            color: #667eea;
         }
 
         button {
@@ -272,9 +310,23 @@
                 <input type="number" id="latitude" placeholder="Latitude (e.g., 40.7128)" step="any">
                 <input type="number" id="longitude" placeholder="Longitude (e.g., -74.0060)" step="any">
             </div>
+            <div class="category-row">
+                <select id="category">
+                    <option value="all">🍽️ All Food & Drink</option>
+                    <option value="restaurant">🍴 Restaurants Only</option>
+                    <option value="cafe">☕ Cafes & Coffee</option>
+                    <option value="bar">🍺 Bars & Pubs</option>
+                    <option value="takeaway">🍔 Fast Food / Takeaway</option>
+                    <option value="bakery">🥐 Bakeries</option>
+                    <option value="delivery">🚗 Meal Delivery</option>
+                </select>
+            </div>
             <div class="button-group">
-                <button class="btn-primary" onclick="searchRestaurants()">🔍 Search Restaurants</button>
+                <button class="btn-primary" onclick="searchRestaurants()">🔍 Search</button>
                 <button class="btn-secondary" onclick="getCurrentLocation()">📍 Use My Location</button>
+            </div>
+            <div class="share-link" id="share-link">
+                📎 Share this search: <a href="#" id="share-url" target="_blank"></a>
             </div>
         </div>
 
@@ -333,20 +385,56 @@
             return distanceKm.toFixed(2) + ' km';
         }
 
+        function updateURL(lat, lon, category) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('lat', lat);
+            url.searchParams.set('lon', lon);
+            url.searchParams.set('category', category);
+            window.history.pushState({}, '', url);
+            
+            // Show share link
+            const shareLink = document.getElementById('share-link');
+            const shareUrl = document.getElementById('share-url');
+            shareUrl.href = url.toString();
+            shareUrl.textContent = url.toString();
+            shareLink.classList.add('active');
+        }
+
+        function parseURLParams() {
+            const params = new URLSearchParams(window.location.search);
+            const lat = params.get('lat');
+            const lon = params.get('lon');
+            const category = params.get('category');
+            
+            if (lat && lon) {
+                document.getElementById('latitude').value = lat;
+                document.getElementById('longitude').value = lon;
+                if (category) {
+                    document.getElementById('category').value = category;
+                }
+                return true;
+            }
+            return false;
+        }
+
         function searchRestaurants() {
             const lat = parseFloat(document.getElementById('latitude').value);
             const lon = parseFloat(document.getElementById('longitude').value);
+            const category = document.getElementById('category').value;
 
             if (isNaN(lat) || isNaN(lon)) {
                 showError('Please enter valid latitude and longitude values');
                 return;
             }
 
+            // Update URL for sharing
+            updateURL(lat, lon, category);
+
             showLoading(true);
             document.getElementById('restaurants-list').innerHTML = '';
             document.getElementById('no-results').classList.remove('active');
 
-            fetch(`/api/restaurants?lat=${lat}&lon=${lon}`)
+            fetch(`/api/restaurants?lat=${lat}&lon=${lon}&category=${category}`)
                 .then(response => {
                     if (!response.ok) {
                         return response.text().then(text => {
@@ -373,6 +461,7 @@
                             <div class="restaurant-header">
                                 <div>
                                     <div class="restaurant-name">${restaurant.Name}</div>
+                                    ${restaurant.Type ? `<div class="restaurant-type" style="font-size: 0.85em; color: #888;">${restaurant.Type}</div>` : ''}
                                 </div>
                                 <div class="restaurant-number">${index + 1}</div>
                             </div>
@@ -416,6 +505,13 @@
         });
         document.getElementById('longitude').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') searchRestaurants();
+        });
+
+        // Parse URL params on page load and auto-search if present
+        window.addEventListener('DOMContentLoaded', () => {
+            if (parseURLParams()) {
+                searchRestaurants();
+            }
         });
     </script>
 </body>
