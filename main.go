@@ -341,6 +341,21 @@ type SearchParams struct {
 	Keyword    string         // Cuisine/keyword filter (e.g., "vegan", "italian")
 }
 
+// SearchStats holds statistics about the search operation
+type SearchStats struct {
+	GoogleAPIPages   int `json:"googleApiPages"`   // Number of Google API pages parsed
+	GoogleResults    int `json:"googleResults"`    // Total results from Google
+	OSMResults       int `json:"osmResults"`       // Total results from OSM
+	TotalResults     int `json:"totalResults"`     // Total unique results after deduplication
+	DuplicatesRemoved int `json:"duplicatesRemoved"` // Number of duplicates removed
+}
+
+// SearchResponse contains both restaurants and search statistics
+type SearchResponse struct {
+	Restaurants []Restaurant `json:"restaurants"`
+	Stats       SearchStats  `json:"stats"`
+}
+
 func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64, category FoodCategory) ([]Restaurant, error) {
 	// Legacy single-category support
 	params := SearchParams{
@@ -351,10 +366,14 @@ func (rb *RestaurantBot) findNearbyRestaurants(lat, lon float64, category FoodCa
 	if category == "" || category == CategoryAll {
 		params.Categories = nil // nil means all
 	}
-	return rb.findNearbyRestaurantsWithParams(params)
+	resp, err := rb.findNearbyRestaurantsWithParams(params)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Restaurants, nil
 }
 
-func (rb *RestaurantBot) findNearbyRestaurantsWithParams(params SearchParams) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsWithParams(params SearchParams) (SearchResponse, error) {
 	switch rb.apiProvider {
 	case "osm":
 		return rb.findNearbyRestaurantsOSMWithParams(params)
@@ -373,14 +392,18 @@ func (rb *RestaurantBot) findNearbyRestaurantsBoth(lat, lon float64, category Fo
 	if category == "" || category == CategoryAll {
 		params.Categories = nil
 	}
-	return rb.findNearbyRestaurantsBothWithParams(params)
+	resp, err := rb.findNearbyRestaurantsBothWithParams(params)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Restaurants, nil
 }
 
-func (rb *RestaurantBot) findNearbyRestaurantsBothWithParams(params SearchParams) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsBothWithParams(params SearchParams) (SearchResponse, error) {
 	type result struct {
-		restaurants []Restaurant
-		err         error
-		source      string
+		response SearchResponse
+		err      error
+		source   string
 	}
 
 	resultsChan := make(chan result, 2)
@@ -388,22 +411,23 @@ func (rb *RestaurantBot) findNearbyRestaurantsBothWithParams(params SearchParams
 	// Search Google Maps in parallel
 	go func() {
 		if rb.mapsClient == nil {
-			resultsChan <- result{restaurants: []Restaurant{}, err: nil, source: "google"}
+			resultsChan <- result{response: SearchResponse{Restaurants: []Restaurant{}, Stats: SearchStats{}}, err: nil, source: "google"}
 			return
 		}
-		restaurants, err := rb.findNearbyRestaurantsGoogleWithParams(params)
-		resultsChan <- result{restaurants: restaurants, err: err, source: "google"}
+		resp, err := rb.findNearbyRestaurantsGoogleWithParams(params)
+		resultsChan <- result{response: resp, err: err, source: "google"}
 	}()
 
 	// Search OpenStreetMap in parallel
 	go func() {
-		restaurants, err := rb.findNearbyRestaurantsOSMWithParams(params)
-		resultsChan <- result{restaurants: restaurants, err: err, source: "osm"}
+		resp, err := rb.findNearbyRestaurantsOSMWithParams(params)
+		resultsChan <- result{response: resp, err: err, source: "osm"}
 	}()
 
 	// Collect results from both providers
 	var allRestaurants []Restaurant
 	var errors []string
+	var stats SearchStats
 
 	for i := 0; i < 2; i++ {
 		res := <-resultsChan
@@ -412,17 +436,27 @@ func (rb *RestaurantBot) findNearbyRestaurantsBothWithParams(params SearchParams
 			log.Printf("Error from %s: %v", res.source, res.err)
 		} else {
 			// Mark each restaurant with its source
-			for j := range res.restaurants {
-				res.restaurants[j].Name = fmt.Sprintf("[%s] %s", strings.ToUpper(res.source), res.restaurants[j].Name)
+			for j := range res.response.Restaurants {
+				res.response.Restaurants[j].Name = fmt.Sprintf("[%s] %s", strings.ToUpper(res.source), res.response.Restaurants[j].Name)
 			}
-			allRestaurants = append(allRestaurants, res.restaurants...)
+			allRestaurants = append(allRestaurants, res.response.Restaurants...)
+			
+			// Aggregate stats
+			if res.source == "google" {
+				stats.GoogleAPIPages = res.response.Stats.GoogleAPIPages
+				stats.GoogleResults = res.response.Stats.GoogleResults
+			} else {
+				stats.OSMResults = res.response.Stats.OSMResults
+			}
 		}
 	}
 
 	// If both failed, return error
 	if len(allRestaurants) == 0 && len(errors) > 0 {
-		return nil, fmt.Errorf("all providers failed: %s", strings.Join(errors, "; "))
+		return SearchResponse{}, fmt.Errorf("all providers failed: %s", strings.Join(errors, "; "))
 	}
+
+	totalBeforeDedup := len(allRestaurants)
 
 	// Deduplicate restaurants based on name and location (within 50m)
 	deduplicated := deduplicateRestaurants(allRestaurants)
@@ -430,8 +464,11 @@ func (rb *RestaurantBot) findNearbyRestaurantsBothWithParams(params SearchParams
 	// Sort by rating (highest first), then by distance for same ratings
 	sortRestaurantsByRating(deduplicated)
 
+	stats.TotalResults = len(deduplicated)
+	stats.DuplicatesRemoved = totalBeforeDedup - len(deduplicated)
+
 	// Return all results (no limit)
-	return deduplicated, nil
+	return SearchResponse{Restaurants: deduplicated, Stats: stats}, nil
 }
 
 // deduplicateRestaurants removes duplicate restaurants based on name similarity and proximity
@@ -529,10 +566,14 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogle(lat, lon float64, category 
 	if category == "" || category == CategoryAll {
 		params.Categories = nil
 	}
-	return rb.findNearbyRestaurantsGoogleWithParams(params)
+	resp, err := rb.findNearbyRestaurantsGoogleWithParams(params)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Restaurants, nil
 }
 
-func (rb *RestaurantBot) findNearbyRestaurantsGoogleWithParams(params SearchParams) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleWithParams(params SearchParams) (SearchResponse, error) {
 	// Resolve keyword if it's a known cuisine
 	keyword := params.Keyword
 	if kw, ok := cuisineKeywords[strings.ToLower(keyword)]; ok {
@@ -563,15 +604,19 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleWithParams(params SearchPara
 
 // findNearbyRestaurantsGoogleAll searches all food categories in parallel
 func (rb *RestaurantBot) findNearbyRestaurantsGoogleAll(lat, lon float64) ([]Restaurant, error) {
-	return rb.findNearbyRestaurantsGoogleMultiple(lat, lon, allFoodCategories, "")
+	resp, err := rb.findNearbyRestaurantsGoogleMultiple(lat, lon, allFoodCategories, "")
+	if err != nil {
+		return nil, err
+	}
+	return resp.Restaurants, nil
 }
 
 // findNearbyRestaurantsGoogleMultiple searches multiple categories in parallel with optional keyword
-func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, categories []FoodCategory, keyword string) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, categories []FoodCategory, keyword string) (SearchResponse, error) {
 	type result struct {
-		restaurants []Restaurant
-		err         error
-		category    FoodCategory
+		response SearchResponse
+		err      error
+		category FoodCategory
 	}
 
 	resultsChan := make(chan result, len(categories))
@@ -580,14 +625,16 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 	for _, cat := range categories {
 		go func(c FoodCategory) {
 			placeType := categoryToGoogleType[c]
-			restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType, keyword)
-			resultsChan <- result{restaurants: restaurants, err: err, category: c}
+			resp, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, placeType, keyword)
+			resultsChan <- result{response: resp, err: err, category: c}
 		}(cat)
 	}
 
 	// Collect results from all categories
 	var allRestaurants []Restaurant
 	var errors []string
+	var totalPages int
+	var totalGoogleResults int
 
 	for i := 0; i < len(categories); i++ {
 		res := <-resultsChan
@@ -595,14 +642,18 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 			errors = append(errors, fmt.Sprintf("%s: %v", res.category, res.err))
 			log.Printf("Error searching %s: %v", res.category, res.err)
 		} else {
-			allRestaurants = append(allRestaurants, res.restaurants...)
+			allRestaurants = append(allRestaurants, res.response.Restaurants...)
+			totalPages += res.response.Stats.GoogleAPIPages
+			totalGoogleResults += res.response.Stats.GoogleResults
 		}
 	}
 
 	// If all failed, return error
 	if len(allRestaurants) == 0 && len(errors) > 0 {
-		return nil, fmt.Errorf("all category searches failed: %s", strings.Join(errors, "; "))
+		return SearchResponse{}, fmt.Errorf("all category searches failed: %s", strings.Join(errors, "; "))
 	}
+
+	totalBeforeDedup := len(allRestaurants)
 
 	// Deduplicate restaurants (same place might appear in multiple categories)
 	deduplicated := deduplicateRestaurants(allRestaurants)
@@ -610,11 +661,18 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 	// Sort by rating (highest first), then by distance for same ratings
 	sortRestaurantsByRating(deduplicated)
 
-	return deduplicated, nil
+	stats := SearchStats{
+		GoogleAPIPages:    totalPages,
+		GoogleResults:     totalGoogleResults,
+		TotalResults:      len(deduplicated),
+		DuplicatesRemoved: totalBeforeDedup - len(deduplicated),
+	}
+
+	return SearchResponse{Restaurants: deduplicated, Stats: stats}, nil
 }
 
 // findNearbyRestaurantsGoogleByType searches for a specific place type with optional keyword
-func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, placeType maps.PlaceType, keyword string) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, placeType maps.PlaceType, keyword string) (SearchResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Longer timeout for pagination
 	defer cancel()
 
@@ -632,6 +690,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 	// Collect all restaurants from all pages (up to 60 results)
 	allRestaurants := make([]Restaurant, 0)
 	var nextPageToken string
+	pagesProcessed := 0
 
 	for page := 0; page < 3; page++ { // Maximum 3 pages (60 results)
 		if page > 0 {
@@ -649,11 +708,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 				continue
 			}
 			if page == 0 {
-				return nil, fmt.Errorf("nearby search failed: %w", err)
+				return SearchResponse{}, fmt.Errorf("nearby search failed: %w", err)
 			}
 			// If pagination fails, return what we have
 			break
 		}
+
+		pagesProcessed++
 
 		// Convert to unified Restaurant format
 		for _, place := range resp.Results {
@@ -705,8 +766,14 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 	// Sort by rating (highest first), then by distance for same ratings
 	sortRestaurantsByRating(allRestaurants)
 
+	stats := SearchStats{
+		GoogleAPIPages: pagesProcessed,
+		GoogleResults:  len(allRestaurants),
+		TotalResults:   len(allRestaurants),
+	}
+
 	// Return all results (up to 60)
-	return allRestaurants, nil
+	return SearchResponse{Restaurants: allRestaurants, Stats: stats}, nil
 }
 
 // isFoodRelatedPlace checks if place has at least one food-related type (last-resort filter)
@@ -845,7 +912,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSM(lat, lon float64, category Foo
 }
 
 // findNearbyRestaurantsOSMWithParams searches OSM with full params support
-func (rb *RestaurantBot) findNearbyRestaurantsOSMWithParams(params SearchParams) ([]Restaurant, error) {
+func (rb *RestaurantBot) findNearbyRestaurantsOSMWithParams(params SearchParams) (SearchResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
@@ -905,19 +972,19 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSMWithParams(params SearchParams)
 	apiURL := "https://overpass-api.de/api/interpreter"
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(query))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return SearchResponse{}, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("overpass API request failed: %w", err)
+		return SearchResponse{}, fmt.Errorf("overpass API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("overpass API returned status %d", resp.StatusCode)
+		return SearchResponse{}, fmt.Errorf("overpass API returned status %d", resp.StatusCode)
 	}
 
 	var overpassResp struct {
@@ -935,7 +1002,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSMWithParams(params SearchParams)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&overpassResp); err != nil {
-		return nil, fmt.Errorf("failed to decode overpass response: %w", err)
+		return SearchResponse{}, fmt.Errorf("failed to decode overpass response: %w", err)
 	}
 
 	restaurants := make([]Restaurant, 0)
@@ -1003,7 +1070,12 @@ func (rb *RestaurantBot) findNearbyRestaurantsOSMWithParams(params SearchParams)
 	// Sort by rating
 	sortRestaurantsByRating(restaurants)
 
-	return restaurants, nil
+	stats := SearchStats{
+		OSMResults:   len(restaurants),
+		TotalResults: len(restaurants),
+	}
+
+	return SearchResponse{Restaurants: restaurants, Stats: stats}, nil
 }
 
 func (rb *RestaurantBot) sendRestaurantsFromCache(chatID int64, restaurants []Restaurant, userLat, userLon float64) {
@@ -1320,7 +1392,7 @@ func main() {
 			}
 
 			// Find restaurants
-			restaurants, err := bot.findNearbyRestaurantsWithParams(params)
+			response, err := bot.findNearbyRestaurantsWithParams(params)
 			if err != nil {
 				log.Printf("Error finding restaurants: %v", err)
 				http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
@@ -1328,7 +1400,7 @@ func main() {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(restaurants)
+			json.NewEncoder(w).Encode(response)
 		})
 
 		// Proxy endpoint for Google Places photos
