@@ -73,32 +73,34 @@ var allFoodCategories = []FoodCategory{
 	CategoryDelivery,
 }
 
-// cuisineSpecificTypes are Google's newer cuisine-specific place types
-// These are searched in addition to generic "restaurant" type for comprehensive results
-var cuisineSpecificTypes = []string{
-	"indian_restaurant",
-	"chinese_restaurant",
-	"thai_restaurant",
-	"japanese_restaurant",
-	"korean_restaurant",
-	"vietnamese_restaurant",
-	"italian_restaurant",
-	"mexican_restaurant",
-	"french_restaurant",
-	"greek_restaurant",
-	"mediterranean_restaurant",
-	"american_restaurant",
-	"seafood_restaurant",
-	"steak_house",
-	"barbecue_restaurant",
-	"pizza_restaurant",
-	"hamburger_restaurant",
-	"sushi_restaurant",
-	"ramen_restaurant",
-	"vegetarian_restaurant",
-	"vegan_restaurant",
-	"breakfast_restaurant",
-	"brunch_restaurant",
+// cuisineKeywordsForSearch are keywords to search with type='restaurant'
+// Google's NearbySearch does NOT support cuisine-specific types as filters
+// (e.g., 'indian_restaurant' as type returns random places, not Indian restaurants)
+// Instead, we search type='restaurant' with keyword='indian', 'chinese', etc.
+var cuisineKeywordsForSearch = []string{
+	"indian",
+	"chinese",
+	"thai",
+	"japanese",
+	"korean",
+	"vietnamese",
+	"italian",
+	"mexican",
+	"french",
+	"greek",
+	"mediterranean",
+	"american",
+	"seafood",
+	"steak",
+	"barbecue",
+	"pizza",
+	"burger",
+	"sushi",
+	"ramen",
+	"vegetarian",
+	"vegan",
+	"breakfast",
+	"brunch",
 }
 
 // Cuisine keywords for more specific searches
@@ -653,26 +655,31 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 		source      string
 	}
 
-	// Check if we're searching for restaurants (include cuisine-specific types and text search)
-	includesCuisineTypes := false
+	// Check if we're searching for restaurants (include cuisine keyword searches and text search)
+	includesRestaurantSearch := false
 	for _, cat := range categories {
 		if cat == CategoryRestaurant {
-			includesCuisineTypes = true
+			includesRestaurantSearch = true
 			break
 		}
 	}
 
-	// Calculate total searches: categories + cuisine-specific types + text searches (if applicable)
+	// Calculate total searches: categories + cuisine keyword searches + text searches (if applicable)
 	totalSearches := len(categories)
 	textSearchQueries := []string{} // Text Search queries to run
-	if includesCuisineTypes {
-		totalSearches += len(cuisineSpecificTypes)
+	
+	// Only do cuisine keyword searches if no specific keyword filter is set
+	cuisineSearches := []string{}
+	if includesRestaurantSearch && keyword == "" {
+		// Search for each cuisine with type='restaurant' + keyword='cuisine'
+		cuisineSearches = cuisineKeywordsForSearch
+		totalSearches += len(cuisineSearches)
 		// Add Text Search queries for comprehensive coverage
-		if keyword != "" {
-			textSearchQueries = append(textSearchQueries, keyword+" restaurant")
-		} else {
-			textSearchQueries = append(textSearchQueries, "restaurant", "food")
-		}
+		textSearchQueries = append(textSearchQueries, "restaurant", "food")
+		totalSearches += len(textSearchQueries)
+	} else if includesRestaurantSearch && keyword != "" {
+		// If keyword is set, just do a text search with that keyword
+		textSearchQueries = append(textSearchQueries, keyword+" restaurant", keyword+" food")
 		totalSearches += len(textSearchQueries)
 	}
 
@@ -687,16 +694,19 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 		}(cat)
 	}
 
-	// Also search cuisine-specific types to catch restaurants typed with specific cuisines
-	if includesCuisineTypes {
-		for _, cuisineType := range cuisineSpecificTypes {
-			go func(ct string) {
-				restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, maps.PlaceType(ct), keyword)
-				resultsChan <- result{restaurants: restaurants, err: err, source: ct}
-			}(cuisineType)
+	// Search with cuisine keywords (type='restaurant' + keyword='indian', etc.)
+	// This is the correct way to find cuisine-specific restaurants
+	if len(cuisineSearches) > 0 {
+		for _, cuisineKw := range cuisineSearches {
+			go func(kw string) {
+				restaurants, err := rb.findNearbyRestaurantsGoogleByType(lat, lon, maps.PlaceTypeRestaurant, kw)
+				resultsChan <- result{restaurants: restaurants, err: err, source: "cuisine:" + kw}
+			}(cuisineKw)
 		}
+	}
 
-		// Also run Text Search for comprehensive coverage
+	// Also run Text Search for comprehensive coverage
+	if len(textSearchQueries) > 0 {
 		for _, query := range textSearchQueries {
 			go func(q string) {
 				restaurants, err := rb.findNearbyRestaurantsGoogleTextSearch(lat, lon, q)
@@ -714,10 +724,10 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 	for i := 0; i < totalSearches; i++ {
 		res := <-resultsChan
 		if res.err != nil {
-			// Only log errors for main categories, not cuisine-specific or text search
-			if !strings.Contains(res.source, "_restaurant") && 
-			   !strings.Contains(res.source, "_house") && 
-			   !strings.HasPrefix(res.source, "text:") {
+			// Log errors but don't fail for cuisine/text searches (they're supplementary)
+			if strings.HasPrefix(res.source, "cuisine:") || strings.HasPrefix(res.source, "text:") {
+				log.Printf("[Search] Supplementary search error from %s: %v", res.source, res.err)
+			} else {
 				errors = append(errors, fmt.Sprintf("%s: %v", res.source, res.err))
 				log.Printf("[Search] Error from %s: %v", res.source, res.err)
 			}
@@ -804,6 +814,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64,
 		}
 
 		log.Printf("[TextSearch] Page %d for query='%s': got %d results", page, query, len(resp.Results))
+
+		// Log ALL raw API results for debugging
+		for i, place := range resp.Results {
+			log.Printf("[TextSearch][RAW] #%d: name='%s', placeID='%s', types=%v, rating=%.1f, reviews=%d, lat=%.6f, lon=%.6f",
+				i+1, place.Name, place.PlaceID, place.Types, place.Rating, place.UserRatingsTotal,
+				place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+		}
 
 		for _, place := range resp.Results {
 			// Log every place we see (for debugging)
@@ -905,6 +922,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 		}
 
 		log.Printf("[NearbySearch] Page %d for type='%s': got %d results", page, placeType, len(resp.Results))
+
+		// Log ALL raw API results for debugging
+		for i, place := range resp.Results {
+			log.Printf("[NearbySearch][RAW] #%d: name='%s', placeID='%s', types=%v, rating=%.1f, reviews=%d, lat=%.6f, lon=%.6f",
+				i+1, place.Name, place.PlaceID, place.Types, place.Rating, place.UserRatingsTotal,
+				place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+		}
 
 		// Convert to unified Restaurant format
 		for _, place := range resp.Results {
