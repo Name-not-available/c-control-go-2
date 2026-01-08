@@ -709,6 +709,8 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 	var allRestaurants []Restaurant
 	var errors []string
 
+	log.Printf("[Search] Waiting for %d search results...", totalSearches)
+
 	for i := 0; i < totalSearches; i++ {
 		res := <-resultsChan
 		if res.err != nil {
@@ -717,10 +719,28 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 			   !strings.Contains(res.source, "_house") && 
 			   !strings.HasPrefix(res.source, "text:") {
 				errors = append(errors, fmt.Sprintf("%s: %v", res.source, res.err))
-				log.Printf("Error searching %s: %v", res.source, res.err)
+				log.Printf("[Search] Error from %s: %v", res.source, res.err)
 			}
 		} else {
+			log.Printf("[Search] Got %d results from %s", len(res.restaurants), res.source)
+			// Check if any result contains "baba"
+			for _, r := range res.restaurants {
+				if strings.Contains(strings.ToLower(r.Name), "baba") {
+					log.Printf("[Search] BABA found in %s results: name='%s', rating=%.1f, reviews=%d, placeID='%s'", 
+						res.source, r.Name, r.Rating, r.ReviewCount, r.PlaceID)
+				}
+			}
 			allRestaurants = append(allRestaurants, res.restaurants...)
+		}
+	}
+
+	log.Printf("[Search] Total restaurants before dedup: %d", len(allRestaurants))
+
+	// Check for Baba before dedup
+	for _, r := range allRestaurants {
+		if strings.Contains(strings.ToLower(r.Name), "baba") {
+			log.Printf("[Search] BABA before dedup: name='%s', lat=%.6f, lon=%.6f, placeID='%s'", 
+				r.Name, r.Latitude, r.Longitude, r.PlaceID)
 		}
 	}
 
@@ -731,6 +751,15 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleMultiple(lat, lon float64, c
 
 	// Deduplicate restaurants (same place might appear in multiple categories)
 	deduplicated := deduplicateRestaurants(allRestaurants)
+
+	log.Printf("[Search] Total restaurants after dedup: %d", len(deduplicated))
+
+	// Check for Baba after dedup
+	for _, r := range deduplicated {
+		if strings.Contains(strings.ToLower(r.Name), "baba") {
+			log.Printf("[Search] BABA after dedup: name='%s', rating=%.1f, reviews=%d", r.Name, r.Rating, r.ReviewCount)
+		}
+	}
 
 	// Sort by rating (highest first), then by distance for same ratings
 	sortRestaurantsByRating(deduplicated)
@@ -757,6 +786,8 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64,
 	allRestaurants := make([]Restaurant, 0)
 	var nextPageToken string
 
+	log.Printf("[TextSearch] Starting search for query='%s' at %.6f,%.6f", query, lat, lon)
+
 	for page := 0; page < 3; page++ { // Maximum 3 pages (60 results)
 		if page > 0 {
 			request.PageToken = nextPageToken
@@ -765,14 +796,23 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64,
 
 		resp, err := rb.mapsClient.TextSearch(ctx, request)
 		if err != nil {
+			log.Printf("[TextSearch] Error on page %d for query='%s': %v", page, query, err)
 			if page == 0 {
 				return nil, fmt.Errorf("text search failed: %w", err)
 			}
 			break
 		}
 
+		log.Printf("[TextSearch] Page %d for query='%s': got %d results", page, query, len(resp.Results))
+
 		for _, place := range resp.Results {
+			// Log every place we see (for debugging)
+			if strings.Contains(strings.ToLower(place.Name), "baba") {
+				log.Printf("[TextSearch] FOUND BABA: name='%s', placeID='%s', types=%v", place.Name, place.PlaceID, place.Types)
+			}
+
 			if !isFoodRelatedPlace(place.Types) {
+				log.Printf("[TextSearch] Filtered out: name='%s', types=%v", place.Name, place.Types)
 				continue
 			}
 
@@ -780,6 +820,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64,
 			
 			// Skip if too far (Text Search can return results outside radius)
 			if distance > 2.5 { // 2.5km max
+				log.Printf("[TextSearch] Too far (%.2fkm): name='%s'", distance, place.Name)
 				continue
 			}
 
@@ -814,6 +855,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64,
 		nextPageToken = resp.NextPageToken
 	}
 
+	log.Printf("[TextSearch] Completed query='%s': returning %d restaurants", query, len(allRestaurants))
 	return allRestaurants, nil
 }
 
@@ -833,6 +875,8 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 		Language: "en",
 	}
 
+	log.Printf("[NearbySearch] Starting search type='%s' keyword='%s' at %.6f,%.6f", placeType, keyword, lat, lon)
+
 	// Collect all restaurants from all pages (up to 60 results)
 	allRestaurants := make([]Restaurant, 0)
 	var nextPageToken string
@@ -846,6 +890,7 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 
 		resp, err := rb.mapsClient.NearbySearch(ctx, request)
 		if err != nil {
+			log.Printf("[NearbySearch] Error on page %d for type='%s': %v", page, placeType, err)
 			if page > 0 && strings.Contains(strings.ToLower(err.Error()), "invalid_request") {
 				// next_page_token not ready yet, wait longer and retry same page
 				time.Sleep(2 * time.Second)
@@ -859,11 +904,19 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 			break
 		}
 
+		log.Printf("[NearbySearch] Page %d for type='%s': got %d results", page, placeType, len(resp.Results))
+
 		// Convert to unified Restaurant format
 		for _, place := range resp.Results {
+			// Log every place we see that contains "baba" (for debugging)
+			if strings.Contains(strings.ToLower(place.Name), "baba") {
+				log.Printf("[NearbySearch] FOUND BABA: name='%s', placeID='%s', types=%v, rating=%.1f, reviews=%d", 
+					place.Name, place.PlaceID, place.Types, place.Rating, place.UserRatingsTotal)
+			}
+
 			// Last-resort post-filter: skip if no food-related types at all
 			if !isFoodRelatedPlace(place.Types) {
-				log.Printf("Filtered out non-food place: %s (types: %v)", place.Name, place.Types)
+				log.Printf("[NearbySearch] Filtered out non-food place: %s (types: %v)", place.Name, place.Types)
 				continue
 			}
 
