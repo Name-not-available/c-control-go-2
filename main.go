@@ -805,6 +805,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearch(lat, lon float64,
 
 		log.Printf("[TextSearch] Page %d for query='%s': got %d results", page, query, len(resp.Results))
 
+		// Log ALL raw API results for debugging
+		for i, place := range resp.Results {
+			log.Printf("[TextSearch][RAW] #%d: name='%s', placeID='%s', types=%v, rating=%.1f, reviews=%d, lat=%.6f, lon=%.6f",
+				i+1, place.Name, place.PlaceID, place.Types, place.Rating, place.UserRatingsTotal,
+				place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+		}
+
 		for _, place := range resp.Results {
 			// Log every place we see (for debugging)
 			if strings.Contains(strings.ToLower(place.Name), "baba") {
@@ -905,6 +912,13 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByType(lat, lon float64, pla
 		}
 
 		log.Printf("[NearbySearch] Page %d for type='%s': got %d results", page, placeType, len(resp.Results))
+
+		// Log ALL raw API results for debugging
+		for i, place := range resp.Results {
+			log.Printf("[NearbySearch][RAW] #%d: name='%s', placeID='%s', types=%v, rating=%.1f, reviews=%d, lat=%.6f, lon=%.6f",
+				i+1, place.Name, place.PlaceID, place.Types, place.Rating, place.UserRatingsTotal,
+				place.Geometry.Location.Lat, place.Geometry.Location.Lng)
+		}
 
 		// Convert to unified Restaurant format
 		for _, place := range resp.Results {
