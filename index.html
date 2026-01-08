@@ -321,6 +321,81 @@
             margin-bottom: 15px;
         }
 
+        .stats-section {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .stats-section.active {
+            display: block;
+        }
+
+        .stats-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+        }
+
+        .stat-item {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #667eea;
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            font-size: 0.75em;
+            color: #666;
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-item.google {
+            background: linear-gradient(135deg, #e8f5e9 0%, #a5d6a7 100%);
+        }
+
+        .stat-item.google .stat-value {
+            color: #2e7d32;
+        }
+
+        .stat-item.osm {
+            background: linear-gradient(135deg, #e3f2fd 0%, #90caf9 100%);
+        }
+
+        .stat-item.osm .stat-value {
+            color: #1565c0;
+        }
+
+        .stat-item.total {
+            background: linear-gradient(135deg, #fce4ec 0%, #f48fb1 100%);
+        }
+
+        .stat-item.total .stat-value {
+            color: #c2185b;
+        }
+
         @media (max-width: 600px) {
             .input-group {
                 flex-direction: column;
@@ -432,6 +507,36 @@
         <div class="error" id="error"></div>
 
         <div class="loading" id="loading">🔍 Searching for nearby restaurants...</div>
+
+        <div class="stats-section" id="stats-section">
+            <div class="stats-title">📊 Search Statistics</div>
+            <div class="stats-grid">
+                <div class="stat-item google" id="stat-google-pages">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Google API Pages</div>
+                </div>
+                <div class="stat-item google" id="stat-google-queries">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Search Queries</div>
+                </div>
+                <div class="stat-item google" id="stat-google-raw">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Google Raw Results</div>
+                </div>
+                <div class="stat-item osm" id="stat-osm">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">OSM Results</div>
+                </div>
+                <div class="stat-item total" id="stat-before-dedup">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Before Dedup</div>
+                </div>
+                <div class="stat-item total" id="stat-final">
+                    <div class="stat-value">0</div>
+                    <div class="stat-label">Final Results</div>
+                </div>
+            </div>
+        </div>
 
         <div class="no-results" id="no-results">
             <div class="emoji">😔</div>
@@ -604,6 +709,33 @@
             return distanceKm.toFixed(2) + ' km';
         }
 
+        function displayStats(stats) {
+            const statsSection = document.getElementById('stats-section');
+            
+            // Update stat values
+            document.querySelector('#stat-google-pages .stat-value').textContent = stats.googlePagesSearched || 0;
+            document.querySelector('#stat-google-queries .stat-value').textContent = stats.googleSearchQueries || 0;
+            document.querySelector('#stat-google-raw .stat-value').textContent = stats.googleResultsRaw || 0;
+            document.querySelector('#stat-osm .stat-value').textContent = stats.osmResultsTotal || 0;
+            document.querySelector('#stat-before-dedup .stat-value').textContent = stats.totalBeforeDedup || 0;
+            document.querySelector('#stat-final .stat-value').textContent = stats.totalAfterDedup || 0;
+
+            // Show/hide relevant stats based on what data is available
+            const hasGoogle = (stats.googlePagesSearched || 0) > 0 || (stats.googleResultsRaw || 0) > 0;
+            const hasOSM = (stats.osmResultsTotal || 0) > 0;
+
+            // Show Google stats if we have Google data
+            document.getElementById('stat-google-pages').style.display = hasGoogle ? 'block' : 'none';
+            document.getElementById('stat-google-queries').style.display = hasGoogle ? 'block' : 'none';
+            document.getElementById('stat-google-raw').style.display = hasGoogle ? 'block' : 'none';
+            
+            // Show OSM stats if we have OSM data
+            document.getElementById('stat-osm').style.display = hasOSM ? 'block' : 'none';
+
+            // Show the stats section
+            statsSection.classList.add('active');
+        }
+
         // Setup checkbox toggle behavior
         document.querySelectorAll('.checkbox-item').forEach(item => {
             item.addEventListener('click', function(e) {
@@ -704,6 +836,7 @@
             showLoading(true);
             document.getElementById('restaurants-list').innerHTML = '';
             document.getElementById('no-results').classList.remove('active');
+            document.getElementById('stats-section').classList.remove('active');
 
             // Build query URL
             let url = `/api/restaurants?lat=${lat}&lon=${lon}&categories=${categories.join(',')}`;
@@ -720,9 +853,21 @@
                     }
                     return response.json();
                 })
-                .then(restaurants => {
+                .then(data => {
                     isSearchInProgress = false;
                     showLoading(false);
+
+                    // Handle both old format (array) and new format (object with stats)
+                    const restaurants = data.restaurants || data;
+                    const stats = data.stats || null;
+
+                    // Display stats if available
+                    if (stats) {
+                        displayStats(stats);
+                    } else {
+                        document.getElementById('stats-section').classList.remove('active');
+                    }
+
                     if (restaurants.length === 0) {
                         document.getElementById('no-results').classList.add('active');
                         return;
