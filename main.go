@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,8 +25,9 @@ const (
 	telegramMaxMessageLength = 4096
 	maxRestaurantsPerMessage = 5
 	requestTimeout           = 10 * time.Second
-	cacheTTL                 = 1 * time.Hour // Cache results for 1 hour
-	cacheGridSize            = 0.01          // ~1km grid for caching (0.01 degrees)
+	cacheTTL                 = 48 * time.Hour      // Cache results for 48 hours
+	cacheRadiusMeters        = 20.0                // 20 meter radius for cache matching
+	photoCachePath           = "/restaurant/photo" // Path to photo cache directory
 )
 
 // FoodCategory represents a category of food establishments
@@ -218,11 +222,14 @@ type RestaurantBot struct {
 // LocationCache stores cached restaurant results
 type LocationCache struct {
 	mu    sync.RWMutex
-	items map[string]cacheItem
+	items []cacheItem
 }
 
 type cacheItem struct {
+	lat         float64
+	lon         float64
 	restaurants []Restaurant
+	stats       SearchStats
 	expiresAt   time.Time
 }
 
@@ -243,13 +250,14 @@ type Restaurant struct {
 
 // SearchStats contains statistics about the search operation
 type SearchStats struct {
-	GooglePagesSearched  int `json:"googlePagesSearched"`  // Total number of Google API pages fetched
-	GoogleSearchQueries  int `json:"googleSearchQueries"`  // Number of different Google search queries made
-	GoogleResultsRaw     int `json:"googleResultsRaw"`     // Raw results from Google before filtering
-	GoogleResultsFiltered int `json:"googleResultsFiltered"` // Results from Google after food filtering
-	OSMResultsTotal      int `json:"osmResultsTotal"`      // Total results from OSM
-	TotalBeforeDedup     int `json:"totalBeforeDedup"`     // Combined total before deduplication
-	TotalAfterDedup      int `json:"totalAfterDedup"`      // Final count after deduplication
+	GooglePagesSearched   int  `json:"googlePagesSearched"`   // Total number of Google API pages fetched
+	GoogleSearchQueries   int  `json:"googleSearchQueries"`   // Number of different Google search queries made
+	GoogleResultsRaw      int  `json:"googleResultsRaw"`      // Raw results from Google before filtering
+	GoogleResultsFiltered int  `json:"googleResultsFiltered"` // Results from Google after food filtering
+	OSMResultsTotal       int  `json:"osmResultsTotal"`       // Total results from OSM
+	TotalBeforeDedup      int  `json:"totalBeforeDedup"`      // Combined total before deduplication
+	TotalAfterDedup       int  `json:"totalAfterDedup"`       // Final count after deduplication
+	CachedResult          bool `json:"cachedResult"`          // True if results were returned from cache
 }
 
 // SearchResult contains both restaurants and statistics
@@ -261,7 +269,7 @@ type SearchResult struct {
 // NewLocationCache creates a new location cache
 func NewLocationCache() *LocationCache {
 	cache := &LocationCache{
-		items: make(map[string]cacheItem),
+		items: make([]cacheItem, 0),
 	}
 	// Start cleanup goroutine
 	go cache.cleanup()
@@ -275,44 +283,67 @@ func (lc *LocationCache) cleanup() {
 	for range ticker.C {
 		lc.mu.Lock()
 		now := time.Now()
-		for key, item := range lc.items {
-			if now.After(item.expiresAt) {
-				delete(lc.items, key)
+		newItems := make([]cacheItem, 0, len(lc.items))
+		for _, item := range lc.items {
+			if now.Before(item.expiresAt) {
+				newItems = append(newItems, item)
 			}
 		}
+		lc.items = newItems
 		lc.mu.Unlock()
 	}
 }
 
-// getCacheKey generates a cache key based on location (rounded to grid)
-func getCacheKey(lat, lon float64) string {
-	// Round to grid to cache nearby locations together
-	gridLat := math.Round(lat/cacheGridSize) * cacheGridSize
-	gridLon := math.Round(lon/cacheGridSize) * cacheGridSize
-	return fmt.Sprintf("%.4f,%.4f", gridLat, gridLon)
-}
-
-// Get retrieves cached restaurants for a location
-func (lc *LocationCache) Get(lat, lon float64) ([]Restaurant, bool) {
+// Get retrieves cached restaurants for a location within 20m radius
+func (lc *LocationCache) Get(lat, lon float64) ([]Restaurant, *SearchStats, bool) {
 	lc.mu.RLock()
 	defer lc.mu.RUnlock()
-	key := getCacheKey(lat, lon)
-	item, exists := lc.items[key]
-	if !exists || time.Now().After(item.expiresAt) {
-		return nil, false
+	now := time.Now()
+	for _, item := range lc.items {
+		if now.After(item.expiresAt) {
+			continue
+		}
+		// Calculate distance in meters (calculateDistance returns km)
+		distanceKm := calculateDistance(lat, lon, item.lat, item.lon)
+		distanceMeters := distanceKm * 1000
+		if distanceMeters <= cacheRadiusMeters {
+			// Return a copy of stats with CachedResult set to true
+			cachedStats := item.stats
+			cachedStats.CachedResult = true
+			return item.restaurants, &cachedStats, true
+		}
 	}
-	return item.restaurants, true
+	return nil, nil, false
 }
 
-// Set stores restaurants in cache
-func (lc *LocationCache) Set(lat, lon float64, restaurants []Restaurant) {
+// Set stores restaurants in cache with their location and stats
+func (lc *LocationCache) Set(lat, lon float64, restaurants []Restaurant, stats SearchStats) {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	key := getCacheKey(lat, lon)
-	lc.items[key] = cacheItem{
-		restaurants: restaurants,
-		expiresAt:   time.Now().Add(cacheTTL),
+	// Check if we already have a cache entry for this location (within radius)
+	for i, item := range lc.items {
+		distanceKm := calculateDistance(lat, lon, item.lat, item.lon)
+		distanceMeters := distanceKm * 1000
+		if distanceMeters <= cacheRadiusMeters {
+			// Update existing entry
+			lc.items[i] = cacheItem{
+				lat:         lat,
+				lon:         lon,
+				restaurants: restaurants,
+				stats:       stats,
+				expiresAt:   time.Now().Add(cacheTTL),
+			}
+			return
+		}
 	}
+	// Add new entry
+	lc.items = append(lc.items, cacheItem{
+		lat:         lat,
+		lon:         lon,
+		restaurants: restaurants,
+		stats:       stats,
+		expiresAt:   time.Now().Add(cacheTTL),
+	})
 }
 
 func NewRestaurantBot(telegramToken string, googleMapsAPIKey string, apiProvider string) (*RestaurantBot, error) {
@@ -402,7 +433,7 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	log.Printf("Received location from user %d: lat=%.6f, lon=%.6f", chatID, location.Latitude, location.Longitude)
 
 	// Check cache first
-	if cached, found := rb.cache.Get(location.Latitude, location.Longitude); found {
+	if cached, _, found := rb.cache.Get(location.Latitude, location.Longitude); found {
 		log.Printf("Cache hit for location %.6f,%.6f", location.Latitude, location.Longitude)
 		rb.sendRestaurantsFromCache(chatID, cached, location.Latitude, location.Longitude)
 		return
@@ -412,23 +443,28 @@ func (rb *RestaurantBot) handleLocation(msg *tgbotapi.Message) {
 	rb.sendTextMessage(chatID, "🔍 Searching for nearby restaurants...")
 
 	// Find nearby restaurants (default to all categories for Telegram)
-	restaurants, err := rb.findNearbyRestaurants(location.Latitude, location.Longitude, CategoryAll)
+	params := SearchParams{
+		Lat:        location.Latitude,
+		Lon:        location.Longitude,
+		Categories: nil, // all categories
+	}
+	result, err := rb.findNearbyRestaurantsWithStats(params)
 	if err != nil {
 		log.Printf("Error finding restaurants: %v", err)
 		rb.sendTextMessage(chatID, "❌ Sorry, I couldn't find restaurants at the moment. Please try again later.")
 		return
 	}
 
-	if len(restaurants) == 0 {
+	if len(result.Restaurants) == 0 {
 		rb.sendTextMessage(chatID, "😔 No restaurants found nearby. Try sharing a different location.")
 		return
 	}
 
-	// Cache the results
-	rb.cache.Set(location.Latitude, location.Longitude, restaurants)
+	// Cache the results with stats
+	rb.cache.Set(location.Latitude, location.Longitude, result.Restaurants, result.Stats)
 
 	// Send results
-	rb.sendRestaurantsFromCache(chatID, restaurants, location.Latitude, location.Longitude)
+	rb.sendRestaurantsFromCache(chatID, result.Restaurants, location.Latitude, location.Longitude)
 }
 
 // SearchParams holds all search parameters
@@ -1742,6 +1778,19 @@ func main() {
 				}
 			}
 
+			// Check cache first (only for searches without keyword filter for now)
+			if params.Keyword == "" {
+				if cached, cachedStats, found := bot.cache.Get(params.Lat, params.Lon); found {
+					log.Printf("API Cache hit for location %.6f,%.6f", params.Lat, params.Lon)
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(&SearchResult{
+						Restaurants: cached,
+						Stats:       *cachedStats,
+					})
+					return
+				}
+			}
+
 			// Find restaurants with stats
 			result, err := bot.findNearbyRestaurantsWithStats(params)
 			if err != nil {
@@ -1750,11 +1799,16 @@ func main() {
 				return
 			}
 
+			// Cache the results (only for searches without keyword filter)
+			if params.Keyword == "" {
+				bot.cache.Set(params.Lat, params.Lon, result.Restaurants, result.Stats)
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(result)
 		})
 
-		// Proxy endpoint for Google Places photos
+		// Proxy endpoint for Google Places photos with disk caching
 		http.HandleFunc("/api/photo", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1764,6 +1818,21 @@ func main() {
 			photoRef := r.URL.Query().Get("photo_reference")
 			if photoRef == "" {
 				http.Error(w, "photo_reference parameter is required", http.StatusBadRequest)
+				return
+			}
+
+			// Generate a safe filename from the photo reference using SHA256 hash
+			hash := sha256.Sum256([]byte(photoRef))
+			filename := hex.EncodeToString(hash[:]) + ".jpg"
+			cachedPath := filepath.Join(photoCachePath, filename)
+
+			// Check if photo exists in cache
+			if fileInfo, err := os.Stat(cachedPath); err == nil && fileInfo.Size() > 0 {
+				// Serve from cache
+				log.Printf("Photo cache hit: %s", filename)
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
+				http.ServeFile(w, r, cachedPath)
 				return
 			}
 
@@ -1787,15 +1856,32 @@ func main() {
 				return
 			}
 
-			// Copy headers
-			w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-			w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
-
-			// Stream the image
-			_, err = io.Copy(w, resp.Body)
+			// Read the photo into memory
+			photoData, err := io.ReadAll(resp.Body)
 			if err != nil {
-				log.Printf("Error streaming photo: %v", err)
+				http.Error(w, fmt.Sprintf("Failed to read photo: %v", err), http.StatusInternalServerError)
+				return
 			}
+
+			// Try to save to disk cache (don't fail if this doesn't work)
+			if err := os.MkdirAll(photoCachePath, 0755); err == nil {
+				if err := os.WriteFile(cachedPath, photoData, 0644); err != nil {
+					log.Printf("Warning: Failed to cache photo to disk: %v", err)
+				} else {
+					log.Printf("Photo cached to disk: %s", filename)
+				}
+			} else {
+				log.Printf("Warning: Failed to create photo cache directory: %v", err)
+			}
+
+			// Serve the photo
+			contentType := resp.Header.Get("Content-Type")
+			if contentType == "" {
+				contentType = "image/jpeg"
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
+			w.Write(photoData)
 		})
 
 		// Serve index-new.html at hard-to-find URL
