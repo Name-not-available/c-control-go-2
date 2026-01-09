@@ -503,12 +503,20 @@
         }
 
         function getRestaurantImageUrl(restaurant) {
-            // If photo reference is available from Google Places API, use it
-            if (restaurant.PhotoReference) {
-                return `/api/photo?photo_reference=${encodeURIComponent(restaurant.PhotoReference)}`;
+            // Photos are stored by place_id (stable restaurant identifier)
+            // This ensures we never call the API twice for the same restaurant
+            if (restaurant.PlaceID && restaurant.PhotoReference) {
+                return `/api/photo?place_id=${encodeURIComponent(restaurant.PlaceID)}&photo_reference=${encodeURIComponent(restaurant.PhotoReference)}`;
             }
             
-            // Fallback: Try to get a food-related image from Unsplash Source
+            // If we have PlaceID but no photo reference (or GENERIC), still use the endpoint
+            // This will serve the generic placeholder image
+            if (restaurant.PlaceID) {
+                return `/api/photo?place_id=${encodeURIComponent(restaurant.PlaceID)}&photo_reference=`;
+            }
+            
+            // Fallback for restaurants without PlaceID (e.g., OSM results)
+            // Try to get a food-related image from Unsplash Source
             const hash = restaurant.Name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
             const foodKeywords = ['restaurant', 'food', 'dining', 'cuisine', 'meal', 'dish', 'cooking'];
             const keyword = foodKeywords[hash % foodKeywords.length];
