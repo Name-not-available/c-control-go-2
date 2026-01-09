@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/jpeg"
 	"io"
 	"log"
 	"math"
@@ -28,7 +33,110 @@ const (
 	cacheTTL                 = 48 * time.Hour      // Cache results for 48 hours
 	cacheRadiusMeters        = 20.0                // 20 meter radius for cache matching
 	photoCachePath           = "/restaurant/photo" // Path to permanent photo storage directory
+
+	// Generic photo constants - used for restaurants that shouldn't trigger Google API calls
+	genericPhotoReference = "GENERIC"           // Special marker for generic/placeholder photo
+	minRatingForPhoto     = 4.0                 // Minimum rating to fetch real photo (below this = generic)
+	minReviewsForPhoto    = 5                   // Minimum reviews to fetch real photo (below this = generic)
+	genericPhotoFilename  = "generic_placeholder.jpg" // Filename for the generic placeholder image
 )
+
+// generateGenericPlaceholderImage creates a simple placeholder image for restaurants
+// without photos or with low ratings/reviews. Returns JPEG bytes.
+// The image is a 400x300 light gray rectangle with a darker gray center icon area.
+func generateGenericPlaceholderImage() ([]byte, error) {
+	// Create a 400x300 image
+	width, height := 400, 300
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// Fill with light gray background (#E8E8E8)
+	bgColor := color.RGBA{232, 232, 232, 255}
+	draw.Draw(img, img.Bounds(), &image.Uniform{bgColor}, image.Point{}, draw.Src)
+
+	// Draw a darker gray rectangle in the center (simulating a plate/placeholder icon)
+	iconColor := color.RGBA{180, 180, 180, 255}
+	iconRect := image.Rect(150, 100, 250, 200)
+	draw.Draw(img, iconRect, &image.Uniform{iconColor}, image.Point{}, draw.Src)
+
+	// Draw a simple fork-like shape (3 vertical lines) - left side
+	forkColor := color.RGBA{140, 140, 140, 255}
+	for i := 0; i < 3; i++ {
+		x := 120 + i*8
+		forkRect := image.Rect(x, 90, x+4, 180)
+		draw.Draw(img, forkRect, &image.Uniform{forkColor}, image.Point{}, draw.Src)
+	}
+	// Fork handle
+	handleRect := image.Rect(120, 180, 140, 210)
+	draw.Draw(img, handleRect, &image.Uniform{forkColor}, image.Point{}, draw.Src)
+
+	// Draw a simple knife shape - right side
+	knifeRect := image.Rect(265, 90, 275, 210)
+	draw.Draw(img, knifeRect, &image.Uniform{forkColor}, image.Point{}, draw.Src)
+
+	// Encode to JPEG
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, fmt.Errorf("failed to encode placeholder image: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// getOrCreateGenericPlaceholder returns the generic placeholder image, creating it if needed.
+// The image is saved to disk for future use.
+func getOrCreateGenericPlaceholder() ([]byte, error) {
+	placeholderPath := filepath.Join(photoCachePath, genericPhotoFilename)
+
+	// Check if placeholder already exists on disk
+	if data, err := os.ReadFile(placeholderPath); err == nil && len(data) > 0 {
+		return data, nil
+	}
+
+	// Generate the placeholder image
+	data, err := generateGenericPlaceholderImage()
+	if err != nil {
+		return nil, err
+	}
+
+	// Save to disk (create directory if needed)
+	if err := os.MkdirAll(photoCachePath, 0755); err != nil {
+		log.Printf("[PHOTO][GENERIC] Warning: could not create directory %s: %v", photoCachePath, err)
+	} else {
+		if err := os.WriteFile(placeholderPath, data, 0644); err != nil {
+			log.Printf("[PHOTO][GENERIC] Warning: could not save placeholder to disk: %v", err)
+		} else {
+			log.Printf("[PHOTO][GENERIC] Created and saved placeholder image: %s (%d bytes)", placeholderPath, len(data))
+		}
+	}
+
+	return data, nil
+}
+
+// shouldUseGenericPhoto determines if a restaurant should use the generic placeholder
+// instead of fetching a real photo from Google API.
+// Returns true if:
+// - Restaurant has no photo reference
+// - Restaurant rating is below minRatingForPhoto (4.0)
+// - Restaurant has fewer than minReviewsForPhoto (5) reviews
+func shouldUseGenericPhoto(photoRef string, rating float64, reviewCount int) bool {
+	// No photo available
+	if photoRef == "" {
+		return true
+	}
+	// Already marked as generic
+	if photoRef == genericPhotoReference {
+		return true
+	}
+	// Low rating - don't waste API calls
+	if rating > 0 && rating < minRatingForPhoto {
+		return true
+	}
+	// Too few reviews - likely unreliable/new place
+	if reviewCount < minReviewsForPhoto {
+		return true
+	}
+	return false
+}
 
 // FoodCategory represents a category of food establishments
 type FoodCategory string
@@ -976,9 +1084,21 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearchWithStats(lat, lon
 				reviewCount = place.UserRatingsTotal
 			}
 
+			// Determine if this restaurant should use generic placeholder image
+			// Skip expensive Google Photo API calls for:
+			// - Restaurants without photos
+			// - Restaurants with rating below 4.0
+			// - Restaurants with fewer than 5 reviews
+			rating := float64(place.Rating)
+			if shouldUseGenericPhoto(photoRef, rating, reviewCount) {
+				photoRef = genericPhotoReference
+				log.Printf("[TextSearch] Using generic photo for '%s' (rating=%.1f, reviews=%d)", 
+					place.Name, rating, reviewCount)
+			}
+
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
-				Rating:         float64(place.Rating),
+				Rating:         rating,
 				ReviewCount:    reviewCount,
 				PriceLevel:     place.PriceLevel,
 				Type:           formatPlaceType(place.Types),
@@ -1100,12 +1220,24 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByTypeWithStats(lat, lon flo
 				reviewCount = place.UserRatingsTotal
 			}
 
+			// Determine if this restaurant should use generic placeholder image
+			// Skip expensive Google Photo API calls for:
+			// - Restaurants without photos
+			// - Restaurants with rating below 4.0
+			// - Restaurants with fewer than 5 reviews
+			rating := float64(place.Rating)
+			if shouldUseGenericPhoto(photoRef, rating, reviewCount) {
+				photoRef = genericPhotoReference
+				log.Printf("[NearbySearch] Using generic photo for '%s' (rating=%.1f, reviews=%d)", 
+					place.Name, rating, reviewCount)
+			}
+
 			priceLevel := place.PriceLevel
 			placeTypeStr := formatPlaceType(place.Types)
 
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
-				Rating:         float64(place.Rating),
+				Rating:         rating,
 				ReviewCount:    reviewCount,
 				PriceLevel:     priceLevel,
 				Type:           placeTypeStr,
@@ -1820,6 +1952,23 @@ func main() {
 			photoRef := r.URL.Query().Get("photo_reference")
 			if photoRef == "" {
 				http.Error(w, "photo_reference parameter is required", http.StatusBadRequest)
+				return
+			}
+
+			// Handle generic placeholder photo request
+			// This is used for restaurants without photos or with low rating/few reviews
+			// to avoid unnecessary Google API calls ($0.007 per photo)
+			if photoRef == genericPhotoReference {
+				log.Printf("[PHOTO][GENERIC] Serving generic placeholder image - $0.00 cost")
+				placeholderData, err := getOrCreateGenericPlaceholder()
+				if err != nil {
+					log.Printf("[PHOTO][GENERIC][ERROR] Failed to generate placeholder: %v", err)
+					http.Error(w, "Failed to generate placeholder image", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Write(placeholderData)
 				return
 			}
 
