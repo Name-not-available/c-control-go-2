@@ -233,6 +233,37 @@
                     </div>
                 </div>
 
+                <!-- Pagination Controls -->
+                <div id="pagination-controls" class="hidden flex justify-center items-center gap-2 p-4 bg-[#FCEDA5] border-t border-yellow-300">
+                    <button 
+                        id="prev-page-btn"
+                        onclick="goToPage(currentPage - 1)"
+                        class="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        ← Prev
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <span class="text-gray-700">Page</span>
+                        <select 
+                            id="page-select"
+                            onchange="goToPage(parseInt(this.value))"
+                            class="px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none bg-white"
+                        >
+                        </select>
+                        <span class="text-gray-700">of <span id="total-pages">1</span></span>
+                    </div>
+                    <button 
+                        id="next-page-btn"
+                        onclick="goToPage(currentPage + 1)"
+                        class="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Next →
+                    </button>
+                    <span class="ml-4 text-sm text-gray-600">
+                        (<span id="showing-count">0</span> of <span id="total-items">0</span> restaurants)
+                    </span>
+                </div>
+
             </div>
         </div>
     </div>
@@ -247,6 +278,12 @@
         let isLocationRequestInProgress = false;
         let isSearchInProgress = false;
         let locationPermissionStatus = null; // 'granted', 'denied', 'prompt', or null
+
+        // Pagination state
+        let currentPage = 1;
+        let totalPages = 1;
+        let itemsPerPage = 20; // Default items per page
+        let currentSearchParams = null; // Store current search params for pagination
 
         function showError(message) {
             const errorDiv = document.getElementById('error');
@@ -454,7 +491,7 @@
             });
         }
 
-        function updateURL(lat, lon, categories, keyword) {
+        function updateURL(lat, lon, categories, keyword, page = 1) {
             const url = new URL(window.location.href);
             url.searchParams.set('lat', lat);
             url.searchParams.set('lon', lon);
@@ -463,6 +500,11 @@
                 url.searchParams.set('keyword', keyword);
             } else {
                 url.searchParams.delete('keyword');
+            }
+            if (page > 1) {
+                url.searchParams.set('page', page);
+            } else {
+                url.searchParams.delete('page');
             }
             window.history.pushState({}, '', url);
             
@@ -480,6 +522,7 @@
             const lon = params.get('lon');
             const categories = params.get('categories');
             const keyword = params.get('keyword');
+            const page = params.get('page');
             
             // Legacy support
             const legacyCategory = params.get('category');
@@ -497,6 +540,12 @@
                 if (keyword) {
                     document.getElementById('keyword').value = keyword;
                 }
+                
+                // Set initial page from URL
+                if (page && parseInt(page) > 0) {
+                    currentPage = parseInt(page);
+                }
+                
                 return true;
             }
             return false;
@@ -597,17 +646,63 @@
             imgContainer.style.backgroundPosition = 'center';
             
             const img = document.createElement('img');
-            img.src = getRestaurantImageUrl(restaurant);
             img.className = 'w-full h-full object-cover absolute top-0 left-0';
             img.alt = restaurant.Name;
-            img.onerror = function() {
-                // If image fails to load, hide it and show the gradient background
-                this.style.display = 'none';
-            };
-            img.onload = function() {
-                // Image loaded successfully, overlay the gradient
-                this.style.display = 'block';
-            };
+            
+            // Create photo source badge (initially hidden)
+            const photoSourceBadge = document.createElement('div');
+            photoSourceBadge.className = 'absolute top-8 left-2 text-[10px] md:text-[8px] font-semibold px-1.5 py-0.5 rounded hidden';
+            imgContainer.appendChild(photoSourceBadge);
+            
+            // Fetch image to get the X-Photo-Source header
+            const imageUrl = getRestaurantImageUrl(restaurant);
+            if (imageUrl.startsWith('/api/photo')) {
+                // Fetch from our API to get headers
+                fetch(imageUrl)
+                    .then(response => {
+                        const photoSource = response.headers.get('X-Photo-Source');
+                        return response.blob().then(blob => ({ blob, photoSource }));
+                    })
+                    .then(({ blob, photoSource }) => {
+                        img.src = URL.createObjectURL(blob);
+                        img.style.display = 'block';
+                        
+                        // Show photo source indicator
+                        if (photoSource) {
+                            photoSourceBadge.classList.remove('hidden');
+                            switch (photoSource) {
+                                case 'disk':
+                                    photoSourceBadge.textContent = '💾 Disk';
+                                    photoSourceBadge.className = 'absolute top-8 left-2 bg-green-500/80 text-white text-[10px] md:text-[8px] font-semibold px-1.5 py-0.5 rounded';
+                                    photoSourceBadge.title = 'Photo loaded from disk cache (free)';
+                                    break;
+                                case 'api':
+                                    photoSourceBadge.textContent = '🌐 API';
+                                    photoSourceBadge.className = 'absolute top-8 left-2 bg-blue-500/80 text-white text-[10px] md:text-[8px] font-semibold px-1.5 py-0.5 rounded';
+                                    photoSourceBadge.title = 'Photo fetched from Google API ($0.007)';
+                                    break;
+                                case 'generic':
+                                    photoSourceBadge.textContent = '🖼️ Generic';
+                                    photoSourceBadge.className = 'absolute top-8 left-2 bg-gray-500/80 text-white text-[10px] md:text-[8px] font-semibold px-1.5 py-0.5 rounded';
+                                    photoSourceBadge.title = 'Generic placeholder image (no API call)';
+                                    break;
+                            }
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Failed to load image:', err);
+                        img.style.display = 'none';
+                    });
+            } else {
+                // External URL (Unsplash fallback)
+                img.src = imageUrl;
+                img.onerror = function() {
+                    this.style.display = 'none';
+                };
+                img.onload = function() {
+                    this.style.display = 'block';
+                };
+            }
             imgContainer.appendChild(img);
             
             // Add rating badge if available (same size as price badge)
@@ -684,10 +779,13 @@
             const element = document.getElementById('floor-3-left-grid');
             if (!element) return;
             
+            // Calculate offset based on current page
+            const indexOffset = (currentPage - 1) * itemsPerPage;
+            
             restaurants.forEach((restaurant, index) => {
                 const box = createRestaurantBox(
                     restaurant, 
-                    index, 
+                    index + indexOffset, // Add offset for correct numbering
                     false, // isBlue
                     false  // isRed
                 );
@@ -695,7 +793,7 @@
             });
         }
 
-        function searchRestaurants() {
+        function searchRestaurants(page = 1, isNewSearch = true) {
             // Prevent multiple concurrent search requests
             if (isSearchInProgress) {
                 console.log('Search already in progress, ignoring duplicate request');
@@ -717,16 +815,26 @@
                 return;
             }
 
+            // Reset to page 1 for new searches
+            if (isNewSearch) {
+                currentPage = 1;
+                page = 1;
+            }
+
+            // Store search params for pagination
+            currentSearchParams = { lat, lon, categories, keyword };
+
             // Update URL for sharing
-            updateURL(lat, lon, categories, keyword);
+            updateURL(lat, lon, categories, keyword, page);
 
             isSearchInProgress = true;
             showLoading(true);
             clearAllGrids();
             document.getElementById('stats-section').classList.add('hidden');
+            document.getElementById('pagination-controls').classList.add('hidden');
 
-            // Build query URL
-            let url = `/api/restaurants?lat=${lat}&lon=${lon}&categories=${categories.join(',')}`;
+            // Build query URL with pagination
+            let url = `/api/restaurants?lat=${lat}&lon=${lon}&categories=${categories.join(',')}&page=${page}&limit=${itemsPerPage}`;
             if (keyword) {
                 url += `&keyword=${encodeURIComponent(keyword)}`;
             }
@@ -747,13 +855,19 @@
                     // Handle both old format (array) and new format (object with stats)
                     const restaurants = data.restaurants || data;
                     const stats = data.stats || null;
+                    const pagination = data.pagination || null;
 
                     // Display stats if available
                     if (stats) {
                         displayStats(stats);
                     }
 
-                    if (restaurants.length === 0) {
+                    // Update pagination controls
+                    if (pagination) {
+                        updatePaginationControls(pagination);
+                    }
+
+                    if (restaurants.length === 0 && page === 1) {
                         showError('No restaurants found. Try a different location.');
                         return;
                     }
@@ -768,6 +882,59 @@
                 });
         }
 
+        function updatePaginationControls(pagination) {
+            currentPage = pagination.page;
+            totalPages = pagination.totalPages;
+
+            const paginationControls = document.getElementById('pagination-controls');
+            const prevBtn = document.getElementById('prev-page-btn');
+            const nextBtn = document.getElementById('next-page-btn');
+            const pageSelect = document.getElementById('page-select');
+            const totalPagesSpan = document.getElementById('total-pages');
+            const showingCount = document.getElementById('showing-count');
+            const totalItems = document.getElementById('total-items');
+
+            // Show pagination controls if there's more than one page
+            if (pagination.totalPages > 1) {
+                paginationControls.classList.remove('hidden');
+            } else {
+                paginationControls.classList.add('hidden');
+            }
+
+            // Update prev/next button states
+            prevBtn.disabled = !pagination.hasPrev;
+            nextBtn.disabled = !pagination.hasNext;
+
+            // Update page selector
+            pageSelect.innerHTML = '';
+            for (let i = 1; i <= pagination.totalPages; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = i;
+                if (i === pagination.page) {
+                    option.selected = true;
+                }
+                pageSelect.appendChild(option);
+            }
+
+            // Update text
+            totalPagesSpan.textContent = pagination.totalPages;
+            
+            // Calculate showing range
+            const startItem = (pagination.page - 1) * pagination.limit + 1;
+            const endItem = Math.min(pagination.page * pagination.limit, pagination.totalItems);
+            showingCount.textContent = `${startItem}-${endItem}`;
+            totalItems.textContent = pagination.totalItems;
+        }
+
+        function goToPage(page) {
+            if (page < 1 || page > totalPages || page === currentPage) {
+                return;
+            }
+            currentPage = page;
+            searchRestaurants(page, false);
+        }
+
         // Allow Enter key to trigger search
         document.getElementById('latitude').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') searchRestaurants();
@@ -779,7 +946,8 @@
         // Parse URL params on page load and auto-search if present
         window.addEventListener('DOMContentLoaded', () => {
             if (parseURLParams()) {
-                searchRestaurants();
+                // Use the page from URL (set by parseURLParams) or default to 1
+                searchRestaurants(currentPage, false);
             }
         });
 

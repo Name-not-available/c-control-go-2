@@ -169,6 +169,8 @@ func serveGenericPlaceholderOnError(w http.ResponseWriter) {
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("X-Photo-Source", "generic")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
 	w.Write(placeholderData)
 }
 
@@ -406,6 +408,23 @@ type SearchStats struct {
 type SearchResult struct {
 	Restaurants []Restaurant `json:"restaurants"`
 	Stats       SearchStats  `json:"stats"`
+}
+
+// PaginatedSearchResult extends SearchResult with pagination info
+type PaginatedSearchResult struct {
+	Restaurants []Restaurant `json:"restaurants"`
+	Stats       SearchStats  `json:"stats"`
+	Pagination  Pagination   `json:"pagination"`
+}
+
+// Pagination contains pagination metadata
+type Pagination struct {
+	Page       int `json:"page"`       // Current page (1-indexed)
+	Limit      int `json:"limit"`      // Items per page
+	TotalItems int `json:"totalItems"` // Total number of items
+	TotalPages int `json:"totalPages"` // Total number of pages
+	HasNext    bool `json:"hasNext"`   // Whether there's a next page
+	HasPrev    bool `json:"hasPrev"`   // Whether there's a previous page
 }
 
 // NewLocationCache creates a new location cache
@@ -1881,12 +1900,15 @@ func main() {
 			// Get lat/lon/categories/keyword from query params or JSON body
 			var params SearchParams
 			var err error
+			var page, limit int = 1, 20 // Default pagination: page 1, 20 items per page
 
 			if r.Method == "GET" {
 				latStr := r.URL.Query().Get("lat")
 				lonStr := r.URL.Query().Get("lon")
 				categoriesStr := r.URL.Query().Get("categories") // comma-separated: "restaurant,cafe"
 				keyword := r.URL.Query().Get("keyword")          // cuisine/diet filter
+				pageStr := r.URL.Query().Get("page")             // pagination: page number (1-indexed)
+				limitStr := r.URL.Query().Get("limit")           // pagination: items per page
 				
 				// Legacy support: also check "category" (single)
 				if categoriesStr == "" {
@@ -1908,6 +1930,18 @@ func main() {
 					return
 				}
 				
+				// Parse pagination parameters
+				if pageStr != "" {
+					if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+						page = p
+					}
+				}
+				if limitStr != "" {
+					if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+						limit = l
+					}
+				}
+				
 				// Parse categories
 				if categoriesStr != "" && categoriesStr != "all" {
 					for _, c := range strings.Split(categoriesStr, ",") {
@@ -1925,6 +1959,8 @@ func main() {
 					Categories []string `json:"categories"` // array of categories
 					Category   string   `json:"category"`   // legacy single category
 					Keyword    string   `json:"keyword"`
+					Page       int      `json:"page"`       // pagination: page number
+					Limit      int      `json:"limit"`      // pagination: items per page
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					http.Error(w, "Invalid JSON body", http.StatusBadRequest)
@@ -1933,6 +1969,14 @@ func main() {
 				params.Lat = req.Lat
 				params.Lon = req.Lon
 				params.Keyword = req.Keyword
+				
+				// Parse pagination from JSON
+				if req.Page > 0 {
+					page = req.Page
+				}
+				if req.Limit > 0 && req.Limit <= 100 {
+					limit = req.Limit
+				}
 				
 				// Support both array and single category
 				if len(req.Categories) > 0 {
@@ -1944,34 +1988,77 @@ func main() {
 				}
 			}
 
+			// Get all restaurants (from cache or fresh search)
+			var allRestaurants []Restaurant
+			var stats SearchStats
+
 			// Check cache first (only for searches without keyword filter for now)
 			if params.Keyword == "" {
 				if cached, cachedStats, found := bot.cache.Get(params.Lat, params.Lon); found {
 					log.Printf("API Cache hit for location %.6f,%.6f", params.Lat, params.Lon)
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(&SearchResult{
-						Restaurants: cached,
-						Stats:       *cachedStats,
-					})
-					return
+					allRestaurants = cached
+					stats = *cachedStats
 				}
 			}
 
-			// Find restaurants with stats
-			result, err := bot.findNearbyRestaurantsWithStats(params)
-			if err != nil {
-				log.Printf("Error finding restaurants: %v", err)
-				http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
-				return
+			// If not cached, fetch fresh results
+			if allRestaurants == nil {
+				result, err := bot.findNearbyRestaurantsWithStats(params)
+				if err != nil {
+					log.Printf("Error finding restaurants: %v", err)
+					http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
+					return
+				}
+				allRestaurants = result.Restaurants
+				stats = result.Stats
+
+				// Cache the results (only for searches without keyword filter)
+				if params.Keyword == "" {
+					bot.cache.Set(params.Lat, params.Lon, allRestaurants, stats)
+				}
 			}
 
-			// Cache the results (only for searches without keyword filter)
-			if params.Keyword == "" {
-				bot.cache.Set(params.Lat, params.Lon, result.Restaurants, result.Stats)
+			// Apply pagination
+			totalItems := len(allRestaurants)
+			totalPages := (totalItems + limit - 1) / limit // Ceiling division
+			if totalPages == 0 {
+				totalPages = 1
+			}
+			
+			// Clamp page to valid range
+			if page > totalPages {
+				page = totalPages
+			}
+			
+			// Calculate slice indices
+			startIdx := (page - 1) * limit
+			endIdx := startIdx + limit
+			if endIdx > totalItems {
+				endIdx = totalItems
+			}
+			if startIdx > totalItems {
+				startIdx = totalItems
+			}
+			
+			// Get paginated slice
+			paginatedRestaurants := allRestaurants[startIdx:endIdx]
+
+			// Build paginated response
+			paginatedResult := PaginatedSearchResult{
+				Restaurants: paginatedRestaurants,
+				Stats:       stats,
+				Pagination: Pagination{
+					Page:       page,
+					Limit:      limit,
+					TotalItems: totalItems,
+					TotalPages: totalPages,
+					HasNext:    page < totalPages,
+					HasPrev:    page > 1,
+				},
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(result)
+			json.NewEncoder(w).Encode(paginatedResult)
 		})
 
 		// Proxy endpoint for Google Places photos with permanent disk storage
@@ -2009,6 +2096,8 @@ func main() {
 				}
 				w.Header().Set("Content-Type", "image/jpeg")
 				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Header().Set("X-Photo-Source", "generic")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
 				w.Write(placeholderData)
 				return
 			}
@@ -2027,6 +2116,8 @@ func main() {
 				log.Printf("[PHOTO][DISK] Serving from disk: %s (size: %d bytes) - $0.00 cost", filename, fileInfo.Size())
 				w.Header().Set("Content-Type", "image/jpeg")
 				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Header().Set("X-Photo-Source", "disk")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
 				http.ServeFile(w, r, storedPath)
 				return
 			}
@@ -2098,6 +2189,8 @@ func main() {
 			}
 			w.Header().Set("Content-Type", contentType)
 			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.Header().Set("X-Photo-Source", "api")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
 			w.Write(photoData)
 		})
 
