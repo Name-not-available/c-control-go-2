@@ -1120,12 +1120,6 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearchWithStats(lat, lon
 			}
 
 			distance := calculateDistance(lat, lon, place.Geometry.Location.Lat, place.Geometry.Location.Lng)
-			
-			// Skip if too far (Text Search can return results outside radius)
-			if distance > 2.5 { // 2.5km max
-				log.Printf("[TextSearch] Too far (%.2fkm): name='%s'", distance, place.Name)
-				continue
-			}
 
 			photoRef := ""
 			if len(place.Photos) > 0 {
