@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -1979,6 +1977,10 @@ func main() {
 		// Proxy endpoint for Google Places photos with permanent disk storage
 		// Photos are saved indefinitely to avoid repeated API costs
 		// Google Places Photo API pricing: $7.00 per 1,000 requests = $0.007 (0.7 cents) per photo
+		//
+		// IMPORTANT: Photos are stored by place_id (stable restaurant identifier), NOT by photo_reference
+		// This ensures we never call the API twice for the same restaurant, even if Google
+		// returns different photo_references over time.
 		http.HandleFunc("/api/photo", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1986,16 +1988,19 @@ func main() {
 			}
 
 			photoRef := r.URL.Query().Get("photo_reference")
-			if photoRef == "" {
-				http.Error(w, "photo_reference parameter is required", http.StatusBadRequest)
+			placeID := r.URL.Query().Get("place_id")
+
+			// Require place_id for proper caching by restaurant
+			if placeID == "" {
+				http.Error(w, "place_id parameter is required", http.StatusBadRequest)
 				return
 			}
 
 			// Handle generic placeholder photo request
 			// This is used for restaurants without photos or with low rating/few reviews
 			// to avoid unnecessary Google API calls ($0.007 per photo)
-			if photoRef == genericPhotoReference {
-				log.Printf("[PHOTO][GENERIC] Serving generic placeholder image - $0.00 cost")
+			if photoRef == genericPhotoReference || photoRef == "" {
+				log.Printf("[PHOTO][GENERIC] Serving generic placeholder image for place_id=%s - $0.00 cost", placeID)
 				placeholderData, err := getOrCreateGenericPlaceholder()
 				if err != nil {
 					log.Printf("[PHOTO][GENERIC][ERROR] Failed to generate placeholder: %v", err)
@@ -2008,9 +2013,12 @@ func main() {
 				return
 			}
 
-			// Generate a safe filename from the photo reference using SHA256 hash
-			hash := sha256.Sum256([]byte(photoRef))
-			filename := hex.EncodeToString(hash[:]) + ".jpg"
+			// Use place_id as filename - this is stable and unique per restaurant
+			// This ensures we only fetch ONE photo per restaurant, ever
+			// Sanitize place_id to be safe for filesystem (remove any path separators)
+			safeePlaceID := strings.ReplaceAll(placeID, "/", "_")
+			safeePlaceID = strings.ReplaceAll(safeePlaceID, "\\", "_")
+			filename := safeePlaceID + ".jpg"
 			storedPath := filepath.Join(photoCachePath, filename)
 
 			// Check if photo exists on disk (permanent storage)
