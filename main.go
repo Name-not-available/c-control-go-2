@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/jpeg"
 	"io"
 	"log"
 	"math"
@@ -28,7 +31,148 @@ const (
 	cacheTTL                 = 48 * time.Hour      // Cache results for 48 hours
 	cacheRadiusMeters        = 20.0                // 20 meter radius for cache matching
 	photoCachePath           = "/restaurant/photo" // Path to permanent photo storage directory
+
+	// Generic photo constants - used for restaurants that shouldn't trigger Google API calls
+	genericPhotoReference = "GENERIC"           // Special marker for generic/placeholder photo
+	minRatingForPhoto     = 4.0                 // Minimum rating to fetch real photo (below this = generic)
+	minReviewsForPhoto    = 5                   // Minimum reviews to fetch real photo (below this = generic)
+	genericPhotoFilename  = "generic_placeholder.jpg" // Filename for the generic placeholder image
 )
+
+// generateGenericPlaceholderImage creates a simple placeholder image for restaurants
+// without photos or with low ratings/reviews. Returns JPEG bytes.
+// The image is a 400x300 light gray rectangle with a darker gray center icon area.
+func generateGenericPlaceholderImage() ([]byte, error) {
+	// Create a 400x300 image
+	width, height := 400, 300
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// Fill with light gray background (#E8E8E8)
+	bgColor := color.RGBA{232, 232, 232, 255}
+	draw.Draw(img, img.Bounds(), &image.Uniform{bgColor}, image.Point{}, draw.Src)
+
+	// Draw a darker gray rectangle in the center (simulating a plate/placeholder icon)
+	iconColor := color.RGBA{180, 180, 180, 255}
+	iconRect := image.Rect(150, 100, 250, 200)
+	draw.Draw(img, iconRect, &image.Uniform{iconColor}, image.Point{}, draw.Src)
+
+	// Draw a simple fork-like shape (3 vertical lines) - left side
+	forkColor := color.RGBA{140, 140, 140, 255}
+	for i := 0; i < 3; i++ {
+		x := 120 + i*8
+		forkRect := image.Rect(x, 90, x+4, 180)
+		draw.Draw(img, forkRect, &image.Uniform{forkColor}, image.Point{}, draw.Src)
+	}
+	// Fork handle
+	handleRect := image.Rect(120, 180, 140, 210)
+	draw.Draw(img, handleRect, &image.Uniform{forkColor}, image.Point{}, draw.Src)
+
+	// Draw a simple knife shape - right side
+	knifeRect := image.Rect(265, 90, 275, 210)
+	draw.Draw(img, knifeRect, &image.Uniform{forkColor}, image.Point{}, draw.Src)
+
+	// Encode to JPEG
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, fmt.Errorf("failed to encode placeholder image: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// getOrCreateGenericPlaceholder returns the generic placeholder image, creating it if needed.
+// The image is saved to disk for future use.
+func getOrCreateGenericPlaceholder() ([]byte, error) {
+	placeholderPath := filepath.Join(photoCachePath, genericPhotoFilename)
+
+	// Check if placeholder already exists on disk
+	if data, err := os.ReadFile(placeholderPath); err == nil && len(data) > 0 {
+		return data, nil
+	}
+
+	// Generate the placeholder image
+	data, err := generateGenericPlaceholderImage()
+	if err != nil {
+		return nil, err
+	}
+
+	// Save to disk (create directory if needed)
+	if err := os.MkdirAll(photoCachePath, 0755); err != nil {
+		log.Printf("[PHOTO][GENERIC] Warning: could not create directory %s: %v", photoCachePath, err)
+	} else {
+		if err := os.WriteFile(placeholderPath, data, 0644); err != nil {
+			log.Printf("[PHOTO][GENERIC] Warning: could not save placeholder to disk: %v", err)
+		} else {
+			log.Printf("[PHOTO][GENERIC] Created and saved placeholder image: %s (%d bytes)", placeholderPath, len(data))
+		}
+	}
+
+	return data, nil
+}
+
+// shouldUseGenericPhoto determines if a restaurant should use the generic placeholder
+// instead of fetching a real photo from Google API.
+// Returns true if:
+// - Restaurant has no photo reference
+// - Restaurant rating is below minRatingForPhoto (4.0)
+// - Restaurant has fewer than minReviewsForPhoto (5) reviews
+func shouldUseGenericPhoto(photoRef string, rating float64, reviewCount int) bool {
+	// No photo available
+	if photoRef == "" {
+		return true
+	}
+	// Already marked as generic
+	if photoRef == genericPhotoReference {
+		return true
+	}
+	// Low rating - don't waste API calls
+	if rating > 0 && rating < minRatingForPhoto {
+		return true
+	}
+	// Too few reviews - likely unreliable/new place
+	if reviewCount < minReviewsForPhoto {
+		return true
+	}
+	return false
+}
+
+// saveGenericPlaceholderForFailedPhoto saves the generic placeholder image to the given path
+// so that future requests for this photo reference won't call the Google API again.
+// This is called when the Google API fails to return a valid photo.
+func saveGenericPlaceholderForFailedPhoto(storedPath, filename string) {
+	placeholderData, err := getOrCreateGenericPlaceholder()
+	if err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to get placeholder: %v", err)
+		return
+	}
+
+	if err := os.MkdirAll(photoCachePath, 0755); err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to create directory: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(storedPath, placeholderData, 0644); err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to save placeholder to %s: %v", storedPath, err)
+	} else {
+		log.Printf("[PHOTO][FALLBACK] Saved generic placeholder as %s - future requests will use this (no API calls)", filename)
+	}
+}
+
+// serveGenericPlaceholderOnError serves the generic placeholder image when an API call fails.
+// This ensures the client still gets an image even when the Google API fails.
+func serveGenericPlaceholderOnError(w http.ResponseWriter) {
+	placeholderData, err := getOrCreateGenericPlaceholder()
+	if err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to serve placeholder: %v", err)
+		http.Error(w, "Failed to load placeholder image", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("X-Photo-Source", "generic")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
+	w.Write(placeholderData)
+}
 
 // FoodCategory represents a category of food establishments
 type FoodCategory string
@@ -264,6 +408,23 @@ type SearchStats struct {
 type SearchResult struct {
 	Restaurants []Restaurant `json:"restaurants"`
 	Stats       SearchStats  `json:"stats"`
+}
+
+// PaginatedSearchResult extends SearchResult with pagination info
+type PaginatedSearchResult struct {
+	Restaurants []Restaurant `json:"restaurants"`
+	Stats       SearchStats  `json:"stats"`
+	Pagination  Pagination   `json:"pagination"`
+}
+
+// Pagination contains pagination metadata
+type Pagination struct {
+	Page       int `json:"page"`       // Current page (1-indexed)
+	Limit      int `json:"limit"`      // Items per page
+	TotalItems int `json:"totalItems"` // Total number of items
+	TotalPages int `json:"totalPages"` // Total number of pages
+	HasNext    bool `json:"hasNext"`   // Whether there's a next page
+	HasPrev    bool `json:"hasPrev"`   // Whether there's a previous page
 }
 
 // NewLocationCache creates a new location cache
@@ -976,9 +1137,21 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleTextSearchWithStats(lat, lon
 				reviewCount = place.UserRatingsTotal
 			}
 
+			// Determine if this restaurant should use generic placeholder image
+			// Skip expensive Google Photo API calls for:
+			// - Restaurants without photos
+			// - Restaurants with rating below 4.0
+			// - Restaurants with fewer than 5 reviews
+			rating := float64(place.Rating)
+			if shouldUseGenericPhoto(photoRef, rating, reviewCount) {
+				photoRef = genericPhotoReference
+				log.Printf("[TextSearch] Using generic photo for '%s' (rating=%.1f, reviews=%d)", 
+					place.Name, rating, reviewCount)
+			}
+
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
-				Rating:         float64(place.Rating),
+				Rating:         rating,
 				ReviewCount:    reviewCount,
 				PriceLevel:     place.PriceLevel,
 				Type:           formatPlaceType(place.Types),
@@ -1100,12 +1273,24 @@ func (rb *RestaurantBot) findNearbyRestaurantsGoogleByTypeWithStats(lat, lon flo
 				reviewCount = place.UserRatingsTotal
 			}
 
+			// Determine if this restaurant should use generic placeholder image
+			// Skip expensive Google Photo API calls for:
+			// - Restaurants without photos
+			// - Restaurants with rating below 4.0
+			// - Restaurants with fewer than 5 reviews
+			rating := float64(place.Rating)
+			if shouldUseGenericPhoto(photoRef, rating, reviewCount) {
+				photoRef = genericPhotoReference
+				log.Printf("[NearbySearch] Using generic photo for '%s' (rating=%.1f, reviews=%d)", 
+					place.Name, rating, reviewCount)
+			}
+
 			priceLevel := place.PriceLevel
 			placeTypeStr := formatPlaceType(place.Types)
 
 			allRestaurants = append(allRestaurants, Restaurant{
 				Name:           place.Name,
-				Rating:         float64(place.Rating),
+				Rating:         rating,
 				ReviewCount:    reviewCount,
 				PriceLevel:     priceLevel,
 				Type:           placeTypeStr,
@@ -1715,12 +1900,15 @@ func main() {
 			// Get lat/lon/categories/keyword from query params or JSON body
 			var params SearchParams
 			var err error
+			var page, limit int = 1, 20 // Default pagination: page 1, 20 items per page
 
 			if r.Method == "GET" {
 				latStr := r.URL.Query().Get("lat")
 				lonStr := r.URL.Query().Get("lon")
 				categoriesStr := r.URL.Query().Get("categories") // comma-separated: "restaurant,cafe"
 				keyword := r.URL.Query().Get("keyword")          // cuisine/diet filter
+				pageStr := r.URL.Query().Get("page")             // pagination: page number (1-indexed)
+				limitStr := r.URL.Query().Get("limit")           // pagination: items per page
 				
 				// Legacy support: also check "category" (single)
 				if categoriesStr == "" {
@@ -1742,6 +1930,18 @@ func main() {
 					return
 				}
 				
+				// Parse pagination parameters
+				if pageStr != "" {
+					if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+						page = p
+					}
+				}
+				if limitStr != "" {
+					if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+						limit = l
+					}
+				}
+				
 				// Parse categories
 				if categoriesStr != "" && categoriesStr != "all" {
 					for _, c := range strings.Split(categoriesStr, ",") {
@@ -1759,6 +1959,8 @@ func main() {
 					Categories []string `json:"categories"` // array of categories
 					Category   string   `json:"category"`   // legacy single category
 					Keyword    string   `json:"keyword"`
+					Page       int      `json:"page"`       // pagination: page number
+					Limit      int      `json:"limit"`      // pagination: items per page
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					http.Error(w, "Invalid JSON body", http.StatusBadRequest)
@@ -1767,6 +1969,14 @@ func main() {
 				params.Lat = req.Lat
 				params.Lon = req.Lon
 				params.Keyword = req.Keyword
+				
+				// Parse pagination from JSON
+				if req.Page > 0 {
+					page = req.Page
+				}
+				if req.Limit > 0 && req.Limit <= 100 {
+					limit = req.Limit
+				}
 				
 				// Support both array and single category
 				if len(req.Categories) > 0 {
@@ -1778,39 +1988,86 @@ func main() {
 				}
 			}
 
+			// Get all restaurants (from cache or fresh search)
+			var allRestaurants []Restaurant
+			var stats SearchStats
+
 			// Check cache first (only for searches without keyword filter for now)
 			if params.Keyword == "" {
 				if cached, cachedStats, found := bot.cache.Get(params.Lat, params.Lon); found {
 					log.Printf("API Cache hit for location %.6f,%.6f", params.Lat, params.Lon)
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(&SearchResult{
-						Restaurants: cached,
-						Stats:       *cachedStats,
-					})
-					return
+					allRestaurants = cached
+					stats = *cachedStats
 				}
 			}
 
-			// Find restaurants with stats
-			result, err := bot.findNearbyRestaurantsWithStats(params)
-			if err != nil {
-				log.Printf("Error finding restaurants: %v", err)
-				http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
-				return
+			// If not cached, fetch fresh results
+			if allRestaurants == nil {
+				result, err := bot.findNearbyRestaurantsWithStats(params)
+				if err != nil {
+					log.Printf("Error finding restaurants: %v", err)
+					http.Error(w, fmt.Sprintf("Error finding restaurants: %v", err), http.StatusInternalServerError)
+					return
+				}
+				allRestaurants = result.Restaurants
+				stats = result.Stats
+
+				// Cache the results (only for searches without keyword filter)
+				if params.Keyword == "" {
+					bot.cache.Set(params.Lat, params.Lon, allRestaurants, stats)
+				}
 			}
 
-			// Cache the results (only for searches without keyword filter)
-			if params.Keyword == "" {
-				bot.cache.Set(params.Lat, params.Lon, result.Restaurants, result.Stats)
+			// Apply pagination
+			totalItems := len(allRestaurants)
+			totalPages := (totalItems + limit - 1) / limit // Ceiling division
+			if totalPages == 0 {
+				totalPages = 1
+			}
+			
+			// Clamp page to valid range
+			if page > totalPages {
+				page = totalPages
+			}
+			
+			// Calculate slice indices
+			startIdx := (page - 1) * limit
+			endIdx := startIdx + limit
+			if endIdx > totalItems {
+				endIdx = totalItems
+			}
+			if startIdx > totalItems {
+				startIdx = totalItems
+			}
+			
+			// Get paginated slice
+			paginatedRestaurants := allRestaurants[startIdx:endIdx]
+
+			// Build paginated response
+			paginatedResult := PaginatedSearchResult{
+				Restaurants: paginatedRestaurants,
+				Stats:       stats,
+				Pagination: Pagination{
+					Page:       page,
+					Limit:      limit,
+					TotalItems: totalItems,
+					TotalPages: totalPages,
+					HasNext:    page < totalPages,
+					HasPrev:    page > 1,
+				},
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(result)
+			json.NewEncoder(w).Encode(paginatedResult)
 		})
 
 		// Proxy endpoint for Google Places photos with permanent disk storage
 		// Photos are saved indefinitely to avoid repeated API costs
 		// Google Places Photo API pricing: $7.00 per 1,000 requests = $0.007 (0.7 cents) per photo
+		//
+		// IMPORTANT: Photos are stored by place_id (stable restaurant identifier), NOT by photo_reference
+		// This ensures we never call the API twice for the same restaurant, even if Google
+		// returns different photo_references over time.
 		http.HandleFunc("/api/photo", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1818,14 +2075,39 @@ func main() {
 			}
 
 			photoRef := r.URL.Query().Get("photo_reference")
-			if photoRef == "" {
-				http.Error(w, "photo_reference parameter is required", http.StatusBadRequest)
+			placeID := r.URL.Query().Get("place_id")
+
+			// Require place_id for proper caching by restaurant
+			if placeID == "" {
+				http.Error(w, "place_id parameter is required", http.StatusBadRequest)
 				return
 			}
 
-			// Generate a safe filename from the photo reference using SHA256 hash
-			hash := sha256.Sum256([]byte(photoRef))
-			filename := hex.EncodeToString(hash[:]) + ".jpg"
+			// Handle generic placeholder photo request
+			// This is used for restaurants without photos or with low rating/few reviews
+			// to avoid unnecessary Google API calls ($0.007 per photo)
+			if photoRef == genericPhotoReference || photoRef == "" {
+				log.Printf("[PHOTO][GENERIC] Serving generic placeholder image for place_id=%s - $0.00 cost", placeID)
+				placeholderData, err := getOrCreateGenericPlaceholder()
+				if err != nil {
+					log.Printf("[PHOTO][GENERIC][ERROR] Failed to generate placeholder: %v", err)
+					http.Error(w, "Failed to generate placeholder image", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Header().Set("X-Photo-Source", "generic")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
+				w.Write(placeholderData)
+				return
+			}
+
+			// Use place_id as filename - this is stable and unique per restaurant
+			// This ensures we only fetch ONE photo per restaurant, ever
+			// Sanitize place_id to be safe for filesystem (remove any path separators)
+			safeePlaceID := strings.ReplaceAll(placeID, "/", "_")
+			safeePlaceID = strings.ReplaceAll(safeePlaceID, "\\", "_")
+			filename := safeePlaceID + ".jpg"
 			storedPath := filepath.Join(photoCachePath, filename)
 
 			// Check if photo exists on disk (permanent storage)
@@ -1834,6 +2116,8 @@ func main() {
 				log.Printf("[PHOTO][DISK] Serving from disk: %s (size: %d bytes) - $0.00 cost", filename, fileInfo.Size())
 				w.Header().Set("Content-Type", "image/jpeg")
 				w.Header().Set("Cache-Control", "public, max-age=86400")
+				w.Header().Set("X-Photo-Source", "disk")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
 				http.ServeFile(w, r, storedPath)
 				return
 			}
@@ -1852,23 +2136,36 @@ func main() {
 
 			resp, err := http.Get(photoURL)
 			if err != nil {
-				log.Printf("[PHOTO][API][ERROR] Failed to fetch from Google API: %v", err)
-				http.Error(w, fmt.Sprintf("Failed to fetch photo: %v", err), http.StatusInternalServerError)
+				log.Printf("[PHOTO][API][ERROR] Failed to fetch from Google API: %v - saving generic placeholder to prevent future API calls", err)
+				// Save generic placeholder so we don't keep trying this photo reference
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
 				return
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				log.Printf("[PHOTO][API][ERROR] Google API returned status %d", resp.StatusCode)
-				http.Error(w, "Failed to fetch photo", resp.StatusCode)
+				log.Printf("[PHOTO][API][ERROR] Google API returned status %d - saving generic placeholder to prevent future API calls", resp.StatusCode)
+				// Save generic placeholder so we don't keep trying this photo reference
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
 				return
 			}
 
 			// Read the photo into memory
 			photoData, err := io.ReadAll(resp.Body)
 			if err != nil {
-				log.Printf("[PHOTO][API][ERROR] Failed to read photo data: %v", err)
-				http.Error(w, fmt.Sprintf("Failed to read photo: %v", err), http.StatusInternalServerError)
+				log.Printf("[PHOTO][API][ERROR] Failed to read photo data: %v - saving generic placeholder", err)
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
+				return
+			}
+
+			// Check if we got actual image data (sometimes API returns empty or error HTML)
+			if len(photoData) < 1000 {
+				log.Printf("[PHOTO][API][ERROR] Photo data too small (%d bytes), likely invalid - saving generic placeholder", len(photoData))
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
 				return
 			}
 
@@ -1892,6 +2189,8 @@ func main() {
 			}
 			w.Header().Set("Content-Type", contentType)
 			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.Header().Set("X-Photo-Source", "api")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Photo-Source")
 			w.Write(photoData)
 		})
 
