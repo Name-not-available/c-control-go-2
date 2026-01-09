@@ -27,7 +27,7 @@ const (
 	requestTimeout           = 10 * time.Second
 	cacheTTL                 = 48 * time.Hour      // Cache results for 48 hours
 	cacheRadiusMeters        = 20.0                // 20 meter radius for cache matching
-	photoCachePath           = "/restaurant/photo" // Path to photo cache directory
+	photoCachePath           = "/restaurant/photo" // Path to permanent photo storage directory
 )
 
 // FoodCategory represents a category of food establishments
@@ -1808,7 +1808,9 @@ func main() {
 			json.NewEncoder(w).Encode(result)
 		})
 
-		// Proxy endpoint for Google Places photos with disk caching
+		// Proxy endpoint for Google Places photos with permanent disk storage
+		// Photos are saved indefinitely to avoid repeated API costs
+		// Google Places Photo API pricing: $7.00 per 1,000 requests = $0.007 (0.7 cents) per photo
 		http.HandleFunc("/api/photo", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1824,17 +1826,20 @@ func main() {
 			// Generate a safe filename from the photo reference using SHA256 hash
 			hash := sha256.Sum256([]byte(photoRef))
 			filename := hex.EncodeToString(hash[:]) + ".jpg"
-			cachedPath := filepath.Join(photoCachePath, filename)
+			storedPath := filepath.Join(photoCachePath, filename)
 
-			// Check if photo exists in cache
-			if fileInfo, err := os.Stat(cachedPath); err == nil && fileInfo.Size() > 0 {
-				// Serve from cache
-				log.Printf("Photo cache hit: %s", filename)
+			// Check if photo exists on disk (permanent storage)
+			if fileInfo, err := os.Stat(storedPath); err == nil && fileInfo.Size() > 0 {
+				// Serve from disk - FREE, no API cost!
+				log.Printf("[PHOTO][DISK] Serving from disk: %s (size: %d bytes) - $0.00 cost", filename, fileInfo.Size())
 				w.Header().Set("Content-Type", "image/jpeg")
-				w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
-				http.ServeFile(w, r, cachedPath)
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				http.ServeFile(w, r, storedPath)
 				return
 			}
+
+			// Photo not on disk - need to fetch from Google API
+			log.Printf("[PHOTO][API] Photo not found on disk, fetching from Google API: %s", filename)
 
 			if googleMapsAPIKey == "" {
 				http.Error(w, "Google Maps API key not configured", http.StatusServiceUnavailable)
@@ -1842,16 +1847,19 @@ func main() {
 			}
 
 			// Fetch photo from Google Places Photo API
+			// Cost: $7.00 per 1,000 requests = $0.007 per request
 			photoURL := fmt.Sprintf("https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=%s&key=%s", photoRef, googleMapsAPIKey)
 
 			resp, err := http.Get(photoURL)
 			if err != nil {
+				log.Printf("[PHOTO][API][ERROR] Failed to fetch from Google API: %v", err)
 				http.Error(w, fmt.Sprintf("Failed to fetch photo: %v", err), http.StatusInternalServerError)
 				return
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
+				log.Printf("[PHOTO][API][ERROR] Google API returned status %d", resp.StatusCode)
 				http.Error(w, "Failed to fetch photo", resp.StatusCode)
 				return
 			}
@@ -1859,19 +1867,22 @@ func main() {
 			// Read the photo into memory
 			photoData, err := io.ReadAll(resp.Body)
 			if err != nil {
+				log.Printf("[PHOTO][API][ERROR] Failed to read photo data: %v", err)
 				http.Error(w, fmt.Sprintf("Failed to read photo: %v", err), http.StatusInternalServerError)
 				return
 			}
 
-			// Try to save to disk cache (don't fail if this doesn't work)
+			log.Printf("[PHOTO][API] Fetched from Google API: %s (size: %d bytes) - cost: $0.007", filename, len(photoData))
+
+			// Save to disk permanently (don't fail request if this doesn't work)
 			if err := os.MkdirAll(photoCachePath, 0755); err == nil {
-				if err := os.WriteFile(cachedPath, photoData, 0644); err != nil {
-					log.Printf("Warning: Failed to cache photo to disk: %v", err)
+				if err := os.WriteFile(storedPath, photoData, 0644); err != nil {
+					log.Printf("[PHOTO][DISK][ERROR] Failed to save photo to disk: %v", err)
 				} else {
-					log.Printf("Photo cached to disk: %s", filename)
+					log.Printf("[PHOTO][DISK] Saved permanently to disk: %s (size: %d bytes)", filename, len(photoData))
 				}
 			} else {
-				log.Printf("Warning: Failed to create photo cache directory: %v", err)
+				log.Printf("[PHOTO][DISK][ERROR] Failed to create photo storage directory %s: %v", photoCachePath, err)
 			}
 
 			// Serve the photo
@@ -1880,7 +1891,7 @@ func main() {
 				contentType = "image/jpeg"
 			}
 			w.Header().Set("Content-Type", contentType)
-			w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 			w.Write(photoData)
 		})
 
