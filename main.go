@@ -138,6 +138,42 @@ func shouldUseGenericPhoto(photoRef string, rating float64, reviewCount int) boo
 	return false
 }
 
+// saveGenericPlaceholderForFailedPhoto saves the generic placeholder image to the given path
+// so that future requests for this photo reference won't call the Google API again.
+// This is called when the Google API fails to return a valid photo.
+func saveGenericPlaceholderForFailedPhoto(storedPath, filename string) {
+	placeholderData, err := getOrCreateGenericPlaceholder()
+	if err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to get placeholder: %v", err)
+		return
+	}
+
+	if err := os.MkdirAll(photoCachePath, 0755); err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to create directory: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(storedPath, placeholderData, 0644); err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to save placeholder to %s: %v", storedPath, err)
+	} else {
+		log.Printf("[PHOTO][FALLBACK] Saved generic placeholder as %s - future requests will use this (no API calls)", filename)
+	}
+}
+
+// serveGenericPlaceholderOnError serves the generic placeholder image when an API call fails.
+// This ensures the client still gets an image even when the Google API fails.
+func serveGenericPlaceholderOnError(w http.ResponseWriter) {
+	placeholderData, err := getOrCreateGenericPlaceholder()
+	if err != nil {
+		log.Printf("[PHOTO][FALLBACK][ERROR] Failed to serve placeholder: %v", err)
+		http.Error(w, "Failed to load placeholder image", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(placeholderData)
+}
+
 // FoodCategory represents a category of food establishments
 type FoodCategory string
 
@@ -2001,23 +2037,36 @@ func main() {
 
 			resp, err := http.Get(photoURL)
 			if err != nil {
-				log.Printf("[PHOTO][API][ERROR] Failed to fetch from Google API: %v", err)
-				http.Error(w, fmt.Sprintf("Failed to fetch photo: %v", err), http.StatusInternalServerError)
+				log.Printf("[PHOTO][API][ERROR] Failed to fetch from Google API: %v - saving generic placeholder to prevent future API calls", err)
+				// Save generic placeholder so we don't keep trying this photo reference
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
 				return
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				log.Printf("[PHOTO][API][ERROR] Google API returned status %d", resp.StatusCode)
-				http.Error(w, "Failed to fetch photo", resp.StatusCode)
+				log.Printf("[PHOTO][API][ERROR] Google API returned status %d - saving generic placeholder to prevent future API calls", resp.StatusCode)
+				// Save generic placeholder so we don't keep trying this photo reference
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
 				return
 			}
 
 			// Read the photo into memory
 			photoData, err := io.ReadAll(resp.Body)
 			if err != nil {
-				log.Printf("[PHOTO][API][ERROR] Failed to read photo data: %v", err)
-				http.Error(w, fmt.Sprintf("Failed to read photo: %v", err), http.StatusInternalServerError)
+				log.Printf("[PHOTO][API][ERROR] Failed to read photo data: %v - saving generic placeholder", err)
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
+				return
+			}
+
+			// Check if we got actual image data (sometimes API returns empty or error HTML)
+			if len(photoData) < 1000 {
+				log.Printf("[PHOTO][API][ERROR] Photo data too small (%d bytes), likely invalid - saving generic placeholder", len(photoData))
+				saveGenericPlaceholderForFailedPhoto(storedPath, filename)
+				serveGenericPlaceholderOnError(w)
 				return
 			}
 
